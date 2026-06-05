@@ -1,0 +1,386 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Lab Concurrencia ADUACOL - Demuestra por que se necesita control de concurrencia'
+
+Parameters:
+  MaxConcurrency:
+    Type: Number
+    Default: 5
+    Description: Maximo de ejecuciones simultaneas permitidas (Demo B)
+
+Resources:
+  # ============================================================
+  # RECURSO COMPARTIDO: Lambda que simula llamada a Bedrock
+  # Tiene un sleep de 5 segundos para simular procesamiento IA
+  # ============================================================
+  SimulateBedrockFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: lab-concurrencia-simulate-bedrock
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 30
+      MemorySize: 128
+      InlineCode: |
+        import time
+        import json
+        import os
+        import boto3
+
+        # Contador de invocaciones concurrentes (solo para observar)
+        cloudwatch = boto3.client('cloudwatch')
+
+        def handler(event, context):
+            start = time.time()
+            doc_id = event.get('document_id', 'unknown')
+            mode = event.get('mode', 'unknown')
+            
+            # Publicar metrica de ejecucion
+            cloudwatch.put_metric_data(
+                Namespace='LabConcurrencia',
+                MetricData=[{
+                    'MetricName': 'ConcurrentExecutions',
+                    'Value': 1,
+                    'Unit': 'Count',
+                    'Dimensions': [{'Name': 'Mode', 'Value': mode}]
+                }]
+            )
+            
+            # Simula procesamiento de 5 segundos (como Bedrock)
+            time.sleep(5)
+            
+            elapsed = time.time() - start
+            return {
+                'statusCode': 200,
+                'document_id': doc_id,
+                'mode': mode,
+                'processing_time_seconds': round(elapsed, 2),
+                'message': f'Documento {doc_id} procesado en {elapsed:.1f}s'
+            }
+      Policies:
+        - CloudWatchPutMetricPolicy: {}
+
+  # ============================================================
+  # DEMO A: SIN CONTROL DE CONCURRENCIA
+  # SQS dispara Lambda que inicia Step Functions directamente
+  # Resultado: TODAS las ejecuciones se lanzan al mismo tiempo
+  # ============================================================
+  QueueSinControl:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: lab-concurrencia-SIN-control
+      VisibilityTimeout: 60
+
+  # Step Function simple (solo llama a la Lambda de Bedrock)
+  StateMachineSinControl:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: lab-concurrencia-SIN-control
+      Definition:
+        StartAt: ProcessDocument
+        States:
+          ProcessDocument:
+            Type: Task
+            Resource: !GetAtt SimulateBedrockFunction.Arn
+            End: true
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SimulateBedrockFunction
+
+  # Lambda que lee de SQS y dispara Step Functions SIN CONTROL
+  DispatcherSinControl:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: lab-concurrencia-dispatcher-SIN-control
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref StateMachineSinControl
+      InlineCode: |
+        import boto3
+        import json
+        import uuid
+
+        sfn = boto3.client('stepfunctions')
+
+        def handler(event, context):
+            sm_arn = __import__('os').environ['STATE_MACHINE_ARN']
+            
+            for record in event['Records']:
+                body = json.loads(record['body'])
+                doc_id = body.get('document_id', str(uuid.uuid4())[:8])
+                
+                # DISPARA DIRECTAMENTE - SIN CONTROL DE CONCURRENCIA
+                sfn.start_execution(
+                    stateMachineArn=sm_arn,
+                    input=json.dumps({
+                        'document_id': doc_id,
+                        'mode': 'SIN_CONTROL'
+                    })
+                )
+                print(f'Disparado SIN control: {doc_id}')
+            
+            return {'statusCode': 200}
+      Policies:
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt StateMachineSinControl.Name
+      Events:
+        SQSTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt QueueSinControl.Arn
+            BatchSize: 10
+
+  # ============================================================
+  # DEMO B: CON CONTROL DE CONCURRENCIA (Semaphore Pattern)
+  # SQS -> Lambda verifica slots en DynamoDB -> Step Functions
+  # Resultado: Maximo N ejecuciones simultaneas
+  # ============================================================
+  QueueConControl:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: lab-concurrencia-CON-control
+      VisibilityTimeout: 60
+
+  # Tabla DynamoDB para el semaforo
+  SemaphoreTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: lab-concurrencia-semaphore
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: LockName
+          AttributeType: S
+      KeySchema:
+        - AttributeName: LockName
+          KeyType: HASH
+
+  # Step Function CON control
+  StateMachineConControl:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: lab-concurrencia-CON-control
+      Definition:
+        StartAt: ProcessDocument
+        States:
+          ProcessDocument:
+            Type: Task
+            Resource: !GetAtt SimulateBedrockFunction.Arn
+            End: true
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SimulateBedrockFunction
+
+  # Lambda que lee de SQS y VERIFICA CONCURRENCIA antes de disparar
+  DispatcherConControl:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: lab-concurrencia-dispatcher-CON-control
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 30
+      MemorySize: 128
+      ReservedConcurrentExecutions: 1
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref StateMachineConControl
+          SEMAPHORE_TABLE: !Ref SemaphoreTable
+          MAX_CONCURRENCY: !Ref MaxConcurrency
+      InlineCode: |
+        import boto3
+        import json
+        import os
+        import uuid
+        from botocore.exceptions import ClientError
+
+        sfn = boto3.client('stepfunctions')
+        dynamodb = boto3.resource('dynamodb')
+
+        def handler(event, context):
+            sm_arn = os.environ['STATE_MACHINE_ARN']
+            table = dynamodb.Table(os.environ['SEMAPHORE_TABLE'])
+            max_conc = int(os.environ['MAX_CONCURRENCY'])
+            
+            for record in event['Records']:
+                body = json.loads(record['body'])
+                doc_id = body.get('document_id', str(uuid.uuid4())[:8])
+                
+                # INTENTAR ADQUIRIR SLOT (Conditional Write)
+                try:
+                    table.update_item(
+                        Key={'LockName': {'S': 'LabSemaphore'}},
+                        UpdateExpression='SET currentCount = if_not_exists(currentCount, :zero) + :inc',
+                        ConditionExpression='attribute_not_exists(currentCount) OR currentCount < :max',
+                        ExpressionAttributeValues={
+                            ':inc': 1,
+                            ':max': max_conc,
+                            ':zero': 0
+                        }
+                    )
+                except ClientError as e:
+                    if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                        # NO HAY SLOTS - mensaje vuelve a la cola
+                        print(f'SIN SLOTS para {doc_id} - reintentando...')
+                        raise Exception(f'No slots available (max={max_conc})')
+                    raise
+                
+                # SLOT ADQUIRIDO - disparar Step Functions
+                sfn.start_execution(
+                    stateMachineArn=sm_arn,
+                    input=json.dumps({
+                        'document_id': doc_id,
+                        'mode': 'CON_CONTROL'
+                    })
+                )
+                print(f'Disparado CON control: {doc_id} (slot adquirido)')
+            
+            return {'statusCode': 200}
+      Policies:
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt StateMachineConControl.Name
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SemaphoreTable
+      Events:
+        SQSTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt QueueConControl.Arn
+            BatchSize: 1
+
+  # Lambda que libera el slot cuando Step Functions termina
+  SlotReleaser:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: lab-concurrencia-slot-releaser
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          SEMAPHORE_TABLE: !Ref SemaphoreTable
+      InlineCode: |
+        import boto3
+        import os
+
+        dynamodb = boto3.resource('dynamodb')
+
+        def handler(event, context):
+            table = dynamodb.Table(os.environ['SEMAPHORE_TABLE'])
+            
+            # Liberar slot
+            table.update_item(
+                Key={'LockName': {'S': 'LabSemaphore'}},
+                UpdateExpression='SET currentCount = currentCount - :dec',
+                ExpressionAttributeValues={':dec': 1}
+            )
+            
+            detail = event.get('detail', {})
+            status = detail.get('status', 'unknown')
+            print(f'Slot liberado. Ejecucion termino con status: {status}')
+            return {'statusCode': 200}
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SemaphoreTable
+
+  # EventBridge rule para detectar cuando Step Functions termina
+  StepFunctionsCompletionRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: lab-concurrencia-sfn-completion
+      EventPattern:
+        source:
+          - aws.states
+        detail-type:
+          - Step Functions Execution Status Change
+        detail:
+          stateMachineArn:
+            - !Ref StateMachineConControl
+          status:
+            - SUCCEEDED
+            - FAILED
+            - TIMED_OUT
+            - ABORTED
+      Targets:
+        - Arn: !GetAtt SlotReleaser.Arn
+          Id: ReleaseSlot
+
+  SlotReleaserPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SlotReleaser
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt StepFunctionsCompletionRule.Arn
+
+  # ============================================================
+  # LAMBDA DE PRUEBA: Envia N mensajes a ambas colas
+  # ============================================================
+  TestTrigger:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: lab-concurrencia-EJECUTAR-TEST
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 60
+      MemorySize: 128
+      Environment:
+        Variables:
+          QUEUE_SIN_CONTROL: !Ref QueueSinControl
+          QUEUE_CON_CONTROL: !Ref QueueConControl
+      InlineCode: |
+        import boto3
+        import json
+        import os
+
+        sqs = boto3.client('sqs')
+
+        def handler(event, context):
+            n = event.get('num_documents', 20)
+            mode = event.get('mode', 'both')  # 'sin', 'con', 'both'
+            
+            results = {}
+            
+            if mode in ('sin', 'both'):
+                queue_url = os.environ['QUEUE_SIN_CONTROL']
+                for i in range(n):
+                    sqs.send_message(
+                        QueueUrl=queue_url,
+                        MessageBody=json.dumps({'document_id': f'doc-{i+1:03d}'})
+                    )
+                results['sin_control'] = f'{n} mensajes enviados a cola SIN control'
+                print(f'Enviados {n} docs a cola SIN control')
+            
+            if mode in ('con', 'both'):
+                queue_url = os.environ['QUEUE_CON_CONTROL']
+                for i in range(n):
+                    sqs.send_message(
+                        QueueUrl=queue_url,
+                        MessageBody=json.dumps({'document_id': f'doc-{i+1:03d}'})
+                    )
+                results['con_control'] = f'{n} mensajes enviados a cola CON control'
+                print(f'Enviados {n} docs a cola CON control')
+            
+            return results
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt QueueSinControl.QueueName
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt QueueConControl.QueueName
+
+Outputs:
+  TestFunction:
+    Description: Lambda para ejecutar el test
+    Value: !Ref TestTrigger
+  QueueSinControl:
+    Description: Cola SIN control de concurrencia
+    Value: !Ref QueueSinControl
+  QueueConControl:
+    Description: Cola CON control de concurrencia
+    Value: !Ref QueueConControl
+  SemaphoreTable:
+    Description: Tabla DynamoDB del semaforo
+    Value: !Ref SemaphoreTable
