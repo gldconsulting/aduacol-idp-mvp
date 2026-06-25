@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lab Concurrencia – ADUACOL IDP</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f1419;color:#e8eaed;min-height:100vh;padding:20px}
+h1{text-align:center;color:#ff9900;margin-bottom:4px;font-size:1.6rem}
+.subtitle{text-align:center;color:#5f6b7a;margin-bottom:20px;font-size:0.85rem}
+.container{display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:1200px;margin:0 auto}
+.panel{background:#1a2332;border:1px solid #2a3544;border-radius:10px;padding:16px}
+.panel h2{font-size:1.1rem;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.panel-bad h2{color:#ef5350}
+.panel-good h2{color:#4caf50}
+.stats{display:flex;gap:12px;margin:10px 0;flex-wrap:wrap}
+.stat{background:#232f3e;padding:6px 12px;border-radius:6px;font-size:0.75rem}
+.stat-val{font-weight:bold;font-size:1.1rem}
+.stat-bad .stat-val{color:#ef5350}
+.stat-good .stat-val{color:#4caf50}
+.stat-active .stat-val{color:#ff9900}
+.pipeline{display:flex;gap:4px;align-items:center;margin:8px 0;font-size:0.7rem;color:#5f6b7a}
+.pipeline span{background:#232f3e;padding:3px 6px;border-radius:3px}
+.pipeline .arrow{background:none;color:#ff9900}
+.queue{background:#232f3e;border:1px solid #3a4a5c;border-radius:6px;padding:8px;margin:8px 0;min-height:40px;display:flex;flex-wrap:wrap;gap:3px;align-items:center}
+.queue-label{font-size:0.7rem;color:#5f6b7a;margin-bottom:4px}
+.doc{width:24px;height:24px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:0.55rem;font-weight:bold;transition:all 0.3s}
+.doc-waiting{background:#3a4a5c;color:#8a9ab0}
+.doc-processing{background:#ff9900;color:#000;animation:pulse 1s infinite}
+.doc-success{background:#4caf50;color:#fff}
+.doc-failed{background:#ef5350;color:#fff}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.6}}
+.slots{display:flex;gap:4px;margin:8px 0;align-items:center}
+.slot{width:36px;height:36px;border:2px dashed #3a4a5c;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:0.6rem;transition:all 0.3s}
+.slot-active{border-color:#ff9900;background:#2a2000}
+.slot-label{font-size:0.7rem;color:#5f6b7a;margin-bottom:4px}
+.results{display:flex;flex-wrap:wrap;gap:3px;margin:8px 0;min-height:40px}
+.controls{text-align:center;margin:16px 0}
+button{background:#ff9900;color:#000;border:none;padding:10px 24px;border-radius:6px;font-size:0.9rem;font-weight:bold;cursor:pointer}
+button:hover{background:#ffad33}
+button:disabled{background:#3a4a5c;color:#5f6b7a;cursor:not-allowed}
+.config{display:flex;gap:12px;justify-content:center;align-items:center;margin:8px 0}
+.config label{font-size:0.8rem;color:#5f6b7a}
+.config input,.config select{background:#232f3e;border:1px solid #3a4a5c;color:#e8eaed;padding:4px 8px;border-radius:4px;width:60px;font-size:0.85rem}
+.legend{display:flex;gap:12px;justify-content:center;margin:12px 0;font-size:0.72rem}
+.legend span{display:flex;align-items:center;gap:4px}
+.legend .dot{width:12px;height:12px;border-radius:3px}
+.throttle-msg{background:#3a1a1a;border:1px solid #ef5350;color:#ef5350;padding:6px 10px;border-radius:6px;font-size:0.75rem;margin:6px 0;display:none}
+.throttle-msg.show{display:block}
+.explanation{background:#1a2332;border:1px solid #2a3544;border-radius:8px;padding:12px;margin-top:16px;max-width:1200px;margin-left:auto;margin-right:auto;font-size:0.82rem;color:#b0b8c4}
+.explanation h3{color:#ff9900;margin-bottom:6px;font-size:0.95rem}
+</style>
+</head>
+<body>
+
+<h1>🔬 Laboratorio: Control de Concurrencia</h1>
+<p class="subtitle">¿Qué pasa cuando 20 documentos llegan al mismo tiempo SIN vs CON control?</p>
+
+<div class="controls">
+<div class="config">
+<label>Documentos: <input type="number" id="numDocs" value="20" min="5" max="50"></label>
+<label>Max slots: <input type="number" id="maxSlots" value="5" min="1" max="10"></label>
+<label>Tiempo proceso (s): <input type="number" id="processTime" value="3" min="1" max="10"></label>
+</div>
+<button id="btnStart" onclick="startSimulation()">▶ INICIAR SIMULACIÓN</button>
+<button id="btnReset" onclick="resetSimulation()" style="background:#3a4a5c;color:#e8eaed;margin-left:8px">↺ RESET</button>
+</div>
+
+<div class="legend">
+<span><div class="dot" style="background:#3a4a5c"></div> En cola</span>
+<span><div class="dot" style="background:#ff9900"></div> Procesando</span>
+<span><div class="dot" style="background:#4caf50"></div> Éxito</span>
+<span><div class="dot" style="background:#ef5350"></div> Falló (throttling)</span>
+</div>
+
+<div class="container">
+<!-- PANEL SIN CONTROL -->
+<div class="panel panel-bad">
+<h2>❌ SIN Control de Concurrencia</h2>
+<p style="font-size:0.75rem;color:#5f6b7a">SQS → Lambda dispara TODOS los Step Functions a la vez</p>
+<div class="pipeline">
+<span>SQS</span><span class="arrow">→</span><span>Lambda</span><span class="arrow">→</span><span>Step Functions (TODAS)</span><span class="arrow">→</span><span style="color:#ef5350">Bedrock THROTTLING</span>
+</div>
+<div class="stats">
+<div class="stat stat-active"><div class="stat-val" id="sin-active">0</div>Activas</div>
+<div class="stat stat-good"><div class="stat-val" id="sin-success">0</div>Éxito</div>
+<div class="stat stat-bad"><div class="stat-val" id="sin-failed">0</div>Fallidas</div>
+<div class="stat"><div class="stat-val" id="sin-queue">0</div>En cola</div>
+</div>
+<div class="throttle-msg" id="sin-throttle">⚠️ THROTTLING: Demasiadas ejecuciones simultáneas. Bedrock rechaza las llamadas.</div>
+<div class="slot-label">Procesamiento (sin límite):</div>
+<div class="queue" id="sin-processing"></div>
+<div class="slot-label">Resultados:</div>
+<div class="results" id="sin-results"></div>
+</div>
+
+<!-- PANEL CON CONTROL -->
+<div class="panel panel-good">
+<h2>✅ CON Control de Concurrencia</h2>
+<p style="font-size:0.75rem;color:#5f6b7a">SQS → queue_processor (verifica DynamoDB) → Step Functions (máx N)</p>
+<div class="pipeline">
+<span>SQS</span><span class="arrow">→</span><span style="color:#4caf50">queue_processor</span><span class="arrow">→</span><span>Step Functions (máx 5)</span><span class="arrow">→</span><span style="color:#4caf50">Bedrock OK</span>
+</div>
+<div class="stats">
+<div class="stat stat-active"><div class="stat-val" id="con-active">0</div>Activas</div>
+<div class="stat stat-good"><div class="stat-val" id="con-success">0</div>Éxito</div>
+<div class="stat stat-bad"><div class="stat-val" id="con-failed">0</div>Fallidas</div>
+<div class="stat"><div class="stat-val" id="con-queue">0</div>En cola</div>
+</div>
+<div class="slot-label">Slots disponibles (<span id="slot-max">5</span>):</div>
+<div class="slots" id="con-slots"></div>
+<div class="slot-label">Cola de espera:</div>
+<div class="queue" id="con-queue-visual"></div>
+<div class="slot-label">Resultados:</div>
+<div class="results" id="con-results"></div>
+</div>
+</div>
+
+<div class="explanation">
+<h3>¿Qué estoy viendo? — La cadena de throttling</h3>
+<p><strong>El problema NO es Step Functions ni Lambda.</strong> Ambos pueden manejar cientos de ejecuciones simultáneas. El cuello de botella es <strong>Amazon Bedrock</strong>, que tiene un límite de tokens/minuto por modelo.</p>
+<p style="margin-top:6px"><strong>Izquierda (SIN control):</strong> Todos los documentos se envían a Bedrock al mismo tiempo. Bedrock tiene un rate limit (~100-200 requests/min para Nova 2 Lite). Cuando se excede → <code>ThrottlingException</code> → Lambda falla → Step Functions marca FAILED → documento perdido (rojo).</p>
+<p style="margin-top:6px"><strong>Derecha (CON control):</strong> El <code>queue_processor</code> consulta un contador atómico en DynamoDB antes de iniciar cada Step Function. Si ya hay 5 corriendo, el documento ESPERA en SQS. Cuando uno termina, <code>workflow_tracker</code> libera el slot y el siguiente documento entra. Bedrock nunca recibe más de lo que puede manejar → TODOS exitosos (verde).</p>
+<p style="margin-top:6px;color:#ff9900"><strong>En producción ADUACOL:</strong> MaxConcurrentWorkflows = 100. Esto protege Bedrock (Nova 2 Lite) de recibir más de 100 llamadas simultáneas. Si llegan 500 documentos en un lote, se procesan de a 100 sin perder ninguno.</p>
+<p style="margin-top:6px;color:#59c4e6"><strong>Cadena de límites:</strong> Step Functions (ilimitado) → Lambda (1000/cuenta) → <strong>Bedrock (rate limit por modelo) ← AQUÍ EXPLOTA</strong> → Textract (100 concurrent)</p>
+</div>
+
+<script>
+let running = false;
+let sinState, conState;
+
+function resetSimulation() {
+  running = false;
+  document.getElementById('btnStart').disabled = false;
+  document.getElementById('sin-active').textContent = '0';
+  document.getElementById('sin-success').textContent = '0';
+  document.getElementById('sin-failed').textContent = '0';
+  document.getElementById('sin-queue').textContent = '0';
+  document.getElementById('con-active').textContent = '0';
+  document.getElementById('con-success').textContent = '0';
+  document.getElementById('con-failed').textContent = '0';
+  document.getElementById('con-queue').textContent = '0';
+  document.getElementById('sin-processing').innerHTML = '';
+  document.getElementById('sin-results').innerHTML = '';
+  document.getElementById('con-queue-visual').innerHTML = '';
+  document.getElementById('con-results').innerHTML = '';
+  document.getElementById('sin-throttle').classList.remove('show');
+  renderSlots(0);
+}
+
+function renderSlots(active) {
+  const max = parseInt(document.getElementById('maxSlots').value);
+  document.getElementById('slot-max').textContent = max;
+  let html = '';
+  for (let i = 0; i < max; i++) {
+    html += `<div class="slot ${i < active ? 'slot-active' : ''}">${i < active ? '⚙️' : ''}</div>`;
+  }
+  document.getElementById('con-slots').innerHTML = html;
+}
+
+function createDocEl(id, status) {
+  const el = document.createElement('div');
+  el.className = `doc doc-${status}`;
+  el.textContent = id;
+  el.title = `Doc ${id} - ${status}`;
+  return el;
+}
+
+async function startSimulation() {
+  if (running) return;
+  running = true;
+  document.getElementById('btnStart').disabled = true;
+  resetSimulation();
+  running = true;
+  document.getElementById('btnStart').disabled = true;
+
+  const numDocs = parseInt(document.getElementById('numDocs').value);
+  const maxSlots = parseInt(document.getElementById('maxSlots').value);
+  const processTime = parseInt(document.getElementById('processTime').value) * 1000;
+  const throttleLimit = 5;
+
+  // ===== SIN CONTROL =====
+  let sinActive = 0, sinSuccess = 0, sinFailed = 0;
+  
+  const sinPromises = [];
+  for (let i = 1; i <= numDocs; i++) {
+    sinPromises.push((async (docId) => {
+      sinActive++;
+      document.getElementById('sin-active').textContent = sinActive;
+      document.getElementById('sin-processing').appendChild(createDocEl(docId, 'processing'));
+      
+      if (sinActive > throttleLimit) {
+        document.getElementById('sin-throttle').classList.add('show');
+      }
+
+      await new Promise(r => setTimeout(r, processTime + Math.random() * 500));
+
+      // Remover del processing
+      const proc = document.getElementById('sin-processing');
+      if (proc.firstChild) proc.removeChild(proc.firstChild);
+
+      if (sinActive > throttleLimit) {
+        sinFailed++;
+        document.getElementById('sin-failed').textContent = sinFailed;
+        document.getElementById('sin-results').appendChild(createDocEl(docId, 'failed'));
+      } else {
+        sinSuccess++;
+        document.getElementById('sin-success').textContent = sinSuccess;
+        document.getElementById('sin-results').appendChild(createDocEl(docId, 'success'));
+      }
+      sinActive--;
+      document.getElementById('sin-active').textContent = sinActive;
+    })(i));
+  }
+
+  // ===== CON CONTROL =====
+  let conActive = 0, conSuccess = 0, conQueue = numDocs;
+  document.getElementById('con-queue').textContent = conQueue;
+
+  // Llenar cola visual
+  for (let i = 1; i <= numDocs; i++) {
+    document.getElementById('con-queue-visual').appendChild(createDocEl(i, 'waiting'));
+  }
+
+  const conProcess = async (docId) => {
+    conActive++;
+    conQueue--;
+    document.getElementById('con-active').textContent = conActive;
+    document.getElementById('con-queue').textContent = conQueue;
+    renderSlots(conActive);
+
+    // Remover de cola visual
+    const qv = document.getElementById('con-queue-visual');
+    if (qv.firstChild) qv.removeChild(qv.firstChild);
+
+    await new Promise(r => setTimeout(r, processTime + Math.random() * 500));
+
+    conActive--;
+    conSuccess++;
+    document.getElementById('con-active').textContent = conActive;
+    document.getElementById('con-success').textContent = conSuccess;
+    document.getElementById('con-results').appendChild(createDocEl(docId, 'success'));
+    renderSlots(conActive);
+  };
+
+  // Procesar con semáforo
+  const semaphore = (limit) => {
+    let active = 0;
+    const queue = [];
+    const next = () => { if (queue.length > 0 && active < limit) { active++; queue.shift()(); } };
+    return (fn) => new Promise((resolve) => {
+      queue.push(async () => { resolve(await fn()); active--; next(); });
+      next();
+    });
+  };
+
+  const sem = semaphore(maxSlots);
+  const conPromises = [];
+  for (let i = 1; i <= numDocs; i++) {
+    conPromises.push(sem(() => conProcess(i)));
+  }
+
+  await Promise.all([...sinPromises, ...conPromises]);
+  running = false;
+  document.getElementById('btnStart').disabled = false;
+}
+
+renderSlots(0);
+</script>
+</body>
+</html>
