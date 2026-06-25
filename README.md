@@ -18,16 +18,27 @@ Demostrar visualmente la diferencia entre procesar documentos **SIN** y **CON** 
 
 ---
 
-## Desplegar
+## Requisitos Previos
+
+1. **AWS SAM CLI** instalado (`brew install aws-sam-cli`)
+2. **AWS CLI** configurado con profile `3htp-col`
+3. **Python 3.12** (para las Lambdas)
+
+## Desplegar (Paso a Paso)
 
 ```bash
-cd lab-concurrencia
+# 1. Clonar el repo y cambiar al branch
+git clone https://github.com/gldconsulting/aduacol-idp-mvp.git
+cd aduacol-idp-mvp
+git checkout lab-step-functions
 
-# Instalar SAM CLI si no lo tienen
-# brew install aws-sam-cli
-
+# 2. Build
 sam build
+
+# 3. Deploy (primera vez usa --guided, después solo sam deploy)
 sam deploy --guided --profile 3htp-col --region us-east-1
+# Stack name: lab-concurrencia
+# Confirm changeset: Y
 ```
 
 Stack name: `lab-concurrencia`
@@ -151,3 +162,19 @@ sam deploy --parameter-overrides MaxConcurrency=3
 | lab-concurrencia-SIN-control (SQS) | Lo que pasaría SIN el queue_processor |
 | MaxConcurrency: 5 | MaxConcurrentWorkflows: 100 |
 | Sleep 5s | Llamada real a Bedrock (~7-15s) |
+
+---
+
+## Frontend Visual (sin despliegue)
+
+Para ver la demo visual offline (simulada, no requiere AWS):
+
+```bash
+# Demo de concurrencia (animación SIN vs CON control)
+open demo-visual.html
+
+# Lab de hiperparámetros (playground interactivo)
+open lab-hiperparametros.html
+```
+
+Estos HTMLs son auto-contenidos — se abren directo en el navegador sin servidor.
