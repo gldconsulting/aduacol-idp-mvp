@@ -1,100 +1,151 @@
-# GenAI IDP Accelerator for AWS CDK
+# Laboratorio: Efecto de Hiperparámetros en la Extracción con Bedrock
 
-[![Compatible with version: 0.4.16](https://img.shields.io/badge/Compatible%20with-0.4.16-brightgreen)](https://github.com/aws-solutions-library-samples/accelerated-intelligent-document-processing-on-aws/releases/tag/v0.4.16)
+## Objetivo
 
-A modular AWS CDK implementation of the GenAI Intelligent Document Processing (IDP) Accelerator, designed to transform unstructured documents into structured data at scale using AWS's latest AI/ML services.
+Demostrar visualmente **por qué se usa temperature=0** en el IDP. Ejecuta la MISMA extracción N veces con diferentes hiperparámetros y compara campo por campo si los resultados son consistentes.
 
-## Overview
+**Punto clave:** Con temperature=0, Bedrock siempre devuelve el mismo JSON. Con temperature>0, cada ejecución puede dar valores diferentes — inaceptable para un sistema transaccional.
 
-This project is a representation of the [GenAI Intelligent Document Processing Accelerator](https://github.com/aws-solutions-library-samples/accelerated-intelligent-document-processing-on-aws) as a set of composable AWS CDK packages, enabling more flexible deployment, customization, and integration options.
+---
 
-### Repository Structure
+## Qué Contiene Este Lab
 
-#### Packages
-- `@cdklabs/genai-idp` - Core building blocks for document processing infrastructure
-- `@cdklabs/genai-idp-bda-processor` - Pattern 1 implementation using Amazon Bedrock Data Automation
-- `@cdklabs/genai-idp-bedrock-llm-processor` - Pattern 2 implementation for custom extraction using Amazon Bedrock models
-- `@cdklabs/genai-idp-sagemaker-udop-processor` - Pattern 3 implementation for specialized document processing using Sagemaker Endpoint
+| Componente | Recurso | Función |
+|---|---|---|
+| Bucket S3 | `lab-bedrock-documents-{account}` | Almacena el PDF de prueba |
+| Lambda | `lab-bedrock-EJECUTAR-TEST` | Ejecuta extracción N veces y compara resultados |
+| Frontend | `lab-hiperparametros.html` | Visualización interactiva con sliders |
+| Frontend | `demo-extraccion.html` | Muestra campos extraídos por tipo de documento |
 
-#### Samples
-- `sample-bda-lending` - Complete Pattern 1 implementation for processing lending documents using Amazon Bedrock Data Automation
-- `sample-bedrock` - Pattern 2 demonstration using custom extraction with Amazon Bedrock foundation models
-- `sample-sagemaker-udop-rvl-cdip` - Pattern 3 implementation using fine-tuned Hugging Face RVL-CDIP model on Amazon SageMaker
+---
 
+## Requisitos Previos
 
-### Key Features
+1. **AWS SAM CLI** instalado (`brew install aws-sam-cli`)
+2. **AWS CLI** configurado con profile `3htp-col`
+3. **Acceso a Amazon Bedrock** — El modelo `us.amazon.nova-lite-v1:0` debe estar habilitado en la cuenta (Model Access en la consola de Bedrock)
+4. **Python 3.12**
 
-- **Modular CDK Architecture**: Organized as reusable CDK constructs that can be composed into complete solutions
-- **Multiple Processing Patterns**: Pre-built document processing patterns for different use cases
-- **Serverless Design**: Built on AWS Lambda, Step Functions, SQS, and other serverless technologies
-- **AI-Powered Document Processing**: Leverages Amazon Bedrock, Textract, and other AWS AI services
-- **Web User Interface**: Optional secure web interface for document tracking and management
-- **Document Knowledge Base**: Query processed documents using natural language
+---
 
-## Prerequisites
-
-- [NVM](https://github.com/nvm-sh/nvm) (Node Version Manager)
-- [yarn](https://yarnpkg.com/) for node package management
-- Docker CLI (can be [Docker Desktop](https://docs.docker.com/desktop/) or [Rancher Desktop](https://rancherdesktop.io/))
-- rsync for copying assets to packages
-- [Python](https://www.python.org/) for building Python GenAI IDP distributable packages
-- [.NET SDK](https://dotnet.microsoft.com/en-us/download) for building .NET GenAI IDP distributable packages
-- [AWS CLI](https://aws.amazon.com/cli/) configured with appropriate credentials
-- [AWS CDK CLI](https://docs.aws.amazon.com/cdk/v2/guide/cli.html) (`npm install -g aws-cdk`)
-## Getting Started
-
-### Environment Setup
-
-1. Set up the correct Node.js version using NVM:
+## Desplegar (Paso a Paso)
 
 ```bash
-# Install the required Node.js version specified in .nvmrc
-nvm install
+# 1. Clonar el repo y cambiar al branch
+git clone https://github.com/gldconsulting/aduacol-idp-mvp.git
+cd aduacol-idp-mvp
+git checkout lab-bedrock
 
-# Use the project's Node.js version
-nvm use
+# 2. Build
+sam build
+
+# 3. Deploy
+sam deploy --guided --profile 3htp-col --region us-east-1
+# Stack name: lab-bedrock
+# Confirm changeset: Y
 ```
 
-2. Install Yarn globally (if not already installed):
+---
+
+## Ejecutar
+
+### Paso 1: Subir un documento de prueba
 
 ```bash
-npm i -g yarn
+aws s3 cp tu-factura.pdf s3://lab-bedrock-documents-$(aws sts get-caller-identity --query Account --output text)/input/sample.pdf --profile 3htp-col
 ```
 
-3. Install project dependencies:
+### Paso 2: Test DETERMINÍSTICO (temperature=0)
 
 ```bash
-yarn install
+aws lambda invoke \
+  --function-name lab-bedrock-EJECUTAR-TEST \
+  --payload '{"temperature": 0, "top_p": 0, "num_runs": 3}' \
+  --profile 3htp-col \
+  --region us-east-1 \
+  output.json && cat output.json | python3 -m json.tool
 ```
 
-### Project Setup
+**Resultado esperado:** `"verdict": "DETERMINISTIC"` — todos los campos iguales en las 3 ejecuciones.
 
-1. Ensure Docker is running and rsync is available
+### Paso 3: Test NO-DETERMINÍSTICO (temperature=0.5)
 
-2. (Re)scaffold the project:
 ```bash
-yarn projen
+aws lambda invoke \
+  --function-name lab-bedrock-EJECUTAR-TEST \
+  --payload '{"temperature": 0.5, "top_p": 0.9, "num_runs": 3}' \
+  --profile 3htp-col \
+  --region us-east-1 \
+  output.json && cat output.json | python3 -m json.tool
 ```
 
-3. Build the packages:
+**Resultado esperado:** `"verdict": "NON-DETERMINISTIC (X fields vary)"` — campos como fechas, montos o nombres varían entre ejecuciones.
+
+### Paso 4: Test TRUNCADO (max_tokens=200)
+
 ```bash
-yarn build
+aws lambda invoke \
+  --function-name lab-bedrock-EJECUTAR-TEST \
+  --payload '{"temperature": 0, "max_tokens": 200, "num_runs": 3}' \
+  --profile 3htp-col \
+  --region us-east-1 \
+  output.json && cat output.json | python3 -m json.tool
 ```
 
-***Note:*** During the first run this might take a while
+**Resultado esperado:** JSON incompleto — campos faltantes porque el modelo se quedó sin tokens.
 
-## License
+---
 
-This project is licensed under the terms specified in the LICENSE file.
+## Frontend Visual
 
-## Contributing
+Abrir `lab-hiperparametros.html` en el navegador para la demo interactiva con sliders (simulada, no requiere AWS).
 
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details on how to get started, development workflow, and coding standards.
+---
 
-## Additional Resources
+## Qué Observar
 
-- [Accelerate intelligent document processing with generative AI on AWS blog post](https://aws.amazon.com/blogs/machine-learning/accelerate-intelligent-document-processing-with-generative-ai-on-aws/)
-- [Gen AI Intelligent Document Processing (GenAIIDP)](https://github.com/aws-solutions-library-samples/accelerated-intelligent-document-processing-on-aws)
-- [AWS CDK Documentation](https://docs.aws.amazon.com/cdk/v2/guide/home.html)
-- [Amazon Bedrock Documentation](https://docs.aws.amazon.com/bedrock/)
-- [Projen Documentation](https://projen.io/)
+| Configuración | Resultado | Impacto en IDP |
+|---|---|---|
+| temperature=0, top_p=0 | ✅ Siempre igual | Correcto para producción |
+| temperature=0.5 | ❌ Campos varían | El sistema transaccional recibiría datos diferentes cada vez |
+| temperature=1.0 | ❌ Alucinaciones | Inventa datos que no están en el documento |
+| max_tokens=200 | ⚠️ JSON truncado | Pierde campos, parser falla |
+
+---
+
+## Relación con el IDP de ADUACOL
+
+| Lab | IDP Real (config.yaml) |
+|---|---|
+| temperature: 0 | `extraction.temperature: 0` |
+| top_p: 0 | `extraction.top_p: 0` |
+| top_k: 5 | `extraction.top_k: 5` |
+| max_tokens: 16000 | `extraction.max_tokens: 16000` |
+| Modelo: Nova 2 Lite | `extraction.model: us.amazon.nova-2-lite-v1:0` |
+
+**Conclusión:** Los hiperparámetros del IDP están en 0 porque necesitamos resultados **idénticos** cada vez que procesamos el mismo documento. Esto es un requisito del sistema transaccional de ADUACOL.
+
+---
+
+## Limpiar
+
+```bash
+aws s3 rm s3://lab-bedrock-documents-$(aws sts get-caller-identity --query Account --output text)/ --recursive --profile 3htp-col
+sam delete --stack-name lab-bedrock --profile 3htp-col --region us-east-1
+```
+
+---
+
+## Frontend Visual (sin despliegue)
+
+Para ver las demos offline (simuladas, no requieren AWS):
+
+```bash
+# Lab de hiperparámetros (sliders + comparación campo por campo)
+open lab-hiperparametros.html
+
+# Demo de extracción (campos extraídos de Factura, BL, Endoso)
+open demo-extraccion.html
+```
+
+Estos HTMLs son auto-contenidos — se abren directo en el navegador sin servidor.

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lab Bedrock – Extracción ADUACOL</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f1419;color:#e8eaed;min-height:100vh;padding:20px}
+h1{text-align:center;color:#ff9900;margin-bottom:4px;font-size:1.5rem}
+.subtitle{text-align:center;color:#5f6b7a;margin-bottom:20px;font-size:0.82rem}
+.container{max-width:1100px;margin:0 auto}
+.tabs{display:flex;gap:4px;margin-bottom:16px}
+.tab{padding:8px 16px;background:#1a2332;border:1px solid #2a3544;border-radius:6px 6px 0 0;cursor:pointer;font-size:0.85rem;color:#5f6b7a}
+.tab.active{background:#232f3e;color:#ff9900;border-bottom-color:#232f3e}
+.panel{background:#1a2332;border:1px solid #2a3544;border-radius:0 10px 10px 10px;padding:20px;display:none}
+.panel.active{display:block}
+.doc-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.doc-card{background:#232f3e;border-radius:8px;padding:16px}
+.doc-card h3{color:#59c4e6;font-size:0.95rem;margin-bottom:10px}
+.field{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #2a3544;font-size:0.82rem}
+.field-name{color:#5f6b7a}
+.field-value{color:#e8eaed;font-weight:500;text-align:right;max-width:60%}
+.field-value.found{color:#4caf50}
+.field-value.missing{color:#ef5350;font-style:italic}
+.confidence{display:inline-block;padding:2px 6px;border-radius:3px;font-size:0.7rem;margin-left:6px}
+.conf-high{background:#1a3a2a;color:#4caf50}
+.conf-med{background:#3a2a1a;color:#ff9900}
+.conf-low{background:#3a1a1a;color:#ef5350}
+.summary{background:#232f3e;border-radius:8px;padding:16px;margin-top:16px}
+.summary h3{color:#ff9900;margin-bottom:10px}
+.stats-row{display:flex;gap:16px;flex-wrap:wrap}
+.stat-box{background:#1a2332;padding:12px;border-radius:6px;text-align:center;min-width:120px}
+.stat-num{font-size:1.8rem;font-weight:bold}
+.stat-num.green{color:#4caf50}
+.stat-num.orange{color:#ff9900}
+.stat-num.red{color:#ef5350}
+.stat-label{font-size:0.72rem;color:#5f6b7a;margin-top:4px}
+.pipeline-flow{display:flex;align-items:center;gap:8px;margin:16px 0;flex-wrap:wrap}
+.pipeline-step{background:#232f3e;padding:8px 14px;border-radius:6px;font-size:0.8rem;border:1px solid #3a4a5c}
+.pipeline-step.active{border-color:#ff9900;color:#ff9900}
+.pipeline-arrow{color:#ff9900;font-size:1.2rem}
+</style>
+</head>
+<body>
+<h1>🔍 Lab Bedrock – Extracción de Documentos</h1>
+<p class="subtitle">Amazon Bedrock Nova 2 Lite · Facturas y Bills of Lading · ADUACOL IDP</p>
+
+<div class="container">
+  <div class="pipeline-flow">
+    <div class="pipeline-step">📄 PDF</div>
+    <span class="pipeline-arrow">→</span>
+    <div class="pipeline-step active">🔤 Textract OCR</div>
+    <span class="pipeline-arrow">→</span>
+    <div class="pipeline-step active">🤖 Bedrock Nova</div>
+    <span class="pipeline-arrow">→</span>
+    <div class="pipeline-step">📊 JSON Estructurado</div>
+    <span class="pipeline-arrow">→</span>
+    <div class="pipeline-step">✅ Sistema Transaccional</div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" onclick="showTab('factura')">Factura Comercial</div>
+    <div class="tab" onclick="showTab('bl')">Bill of Lading</div>
+    <div class="tab" onclick="showTab('endoso')">BL con Endoso</div>
+  </div>
+
+  <div class="panel active" id="panel-factura">
+    <div class="doc-grid">
+      <div class="doc-card">
+        <h3>📄 Documento Original</h3>
+        <div class="field"><span class="field-name">Archivo</span><span class="field-value">MALAWY260206-848H.pdf</span></div>
+        <div class="field"><span class="field-name">Tipo Operación</span><span class="field-value">IMPO</span></div>
+        <div class="field"><span class="field-name">Páginas</span><span class="field-value">2</span></div>
+        <div class="field"><span class="field-name">Idioma</span><span class="field-value">Inglés / Chino</span></div>
+      </div>
+      <div class="doc-card">
+        <h3>🤖 Extracción Bedrock</h3>
+        <div class="field"><span class="field-name">numero_factura</span><span class="field-value found">MALAWY260206-848H <span class="confidence conf-high">95%</span></span></div>
+        <div class="field"><span class="field-name">importador_nombre</span><span class="field-value found">COMERCIALIZADORA MALAWY S.A.S. <span class="confidence conf-high">92%</span></span></div>
+        <div class="field"><span class="field-name">termino_negociacion</span><span class="field-value found">FOB <span class="confidence conf-high">98%</span></span></div>
+        <div class="field"><span class="field-name">valor_total_usd</span><span class="field-value found">15,234.50 <span class="confidence conf-high">94%</span></span></div>
+        <div class="field"><span class="field-name">valor_fob</span><span class="field-value found">15,234.50 <span class="confidence conf-high">94%</span></span></div>
+        <div class="field"><span class="field-name">exportador_nombre</span><span class="field-value found">GUANGZHOU XINCHENG TRADING <span class="confidence conf-med">85%</span></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-bl">
+    <div class="doc-grid">
+      <div class="doc-card">
+        <h3>📄 Documento Original</h3>
+        <div class="field"><span class="field-name">Archivo</span><span class="field-value">HBL0366084A.pdf</span></div>
+        <div class="field"><span class="field-name">Tipo Operación</span><span class="field-value">IMPO</span></div>
+        <div class="field"><span class="field-name">Tipo BL</span><span class="field-value">HOUSE (Freight Forwarder)</span></div>
+      </div>
+      <div class="doc-card">
+        <h3>🤖 Extracción Bedrock</h3>
+        <div class="field"><span class="field-name">bl_number</span><span class="field-value found">HBL0366084A <span class="confidence conf-high">97%</span></span></div>
+        <div class="field"><span class="field-name">consignee_nombre</span><span class="field-value found">COMERCIALIZADORA MALAWY S.A.S. <span class="confidence conf-high">93%</span></span></div>
+        <div class="field"><span class="field-name">administracion_aduana</span><span class="field-value found">BUENAVENTURA <span class="confidence conf-high">96%</span></span></div>
+        <div class="field"><span class="field-name">endoso</span><span class="field-value missing">null (no aplica)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-endoso">
+    <div class="doc-grid">
+      <div class="doc-card">
+        <h3>📄 BL Endosado</h3>
+        <div class="field"><span class="field-name">Archivo</span><span class="field-value">BL Endosado MEDUWN622669.pdf</span></div>
+        <div class="field"><span class="field-name">Consignee Original</span><span class="field-value">INTERNATIONAL FRONTIER SAS</span></div>
+        <div class="field"><span class="field-name">Importador Real</span><span class="field-value">FLEX INDUSTRIAL SAS</span></div>
+        <div class="field"><span class="field-name">Caso</span><span class="field-value" style="color:#ff9900">Endoso transfiere derechos</span></div>
+      </div>
+      <div class="doc-card">
+        <h3>🤖 Extracción Bedrock</h3>
+        <div class="field"><span class="field-name">bl_number</span><span class="field-value found">MEDUWN622669 <span class="confidence conf-high">97%</span></span></div>
+        <div class="field"><span class="field-name">consignee_nombre</span><span class="field-value found">INTERNATIONAL FRONTIER SAS <span class="confidence conf-high">94%</span></span></div>
+        <div class="field"><span class="field-name">administracion_aduana</span><span class="field-value found">CARTAGENA <span class="confidence conf-high">91%</span></span></div>
+        <div class="field"><span class="field-name">endoso.empresa_destino</span><span class="field-value found">FLEX INDUSTRIAL SAS <span class="confidence conf-med">82%</span></span></div>
+        <div class="field"><span class="field-name">endoso.nit_destino</span><span class="field-value found">901307102-0 <span class="confidence conf-med">80%</span></span></div>
+      </div>
+    </div>
+    <div class="summary" style="margin-top:12px;background:#1a3a2a;border:1px solid #4caf50">
+      <p style="color:#4caf50;font-size:0.85rem">✅ <b>Validación vía endoso:</b> importador_nombre (factura) = FLEX INDUSTRIAL SAS == endoso.empresa_destino (BL) = FLEX INDUSTRIAL SAS → CHECK PASA</p>
+    </div>
+  </div>
+
+  <div class="summary">
+    <h3>📊 Resumen del Lab</h3>
+    <div class="stats-row">
+      <div class="stat-box"><div class="stat-num green">6</div><div class="stat-label">Campos Requeridos<br>Factura</div></div>
+      <div class="stat-box"><div class="stat-num green">4</div><div class="stat-label">Campos Requeridos<br>BL</div></div>
+      <div class="stat-box"><div class="stat-num orange">~7s</div><div class="stat-label">Tiempo Extracción<br>por Documento</div></div>
+      <div class="stat-box"><div class="stat-num green">92%</div><div class="stat-label">Confianza<br>Promedio</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('panel-' + name).classList.add('active');
+}
+</script>
+</body>
+</html>

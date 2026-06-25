@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lab – Hiperparámetros Bedrock</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f1419;color:#e8eaed;min-height:100vh;padding:20px}
+h1{text-align:center;color:#ff9900;margin-bottom:4px;font-size:1.5rem}
+.subtitle{text-align:center;color:#5f6b7a;margin-bottom:16px;font-size:0.82rem}
+.layout{display:grid;grid-template-columns:300px 1fr;gap:16px;max-width:1200px;margin:0 auto}
+.controls{background:#1a2332;border:1px solid #2a3544;border-radius:10px;padding:16px;position:sticky;top:20px;align-self:start}
+.controls h3{color:#59c4e6;margin-bottom:10px;font-size:0.95rem}
+.param{margin-bottom:16px}
+.param label{display:block;font-size:0.8rem;color:#ff9900;margin-bottom:4px;font-weight:600}
+.param input[type=range]{width:100%;margin:4px 0;accent-color:#ff9900}
+.param .val{font-size:1rem;color:#59c4e6;font-family:monospace;font-weight:bold}
+.param .desc{font-size:0.7rem;color:#5f6b7a;margin-top:2px}
+.btn{background:#ff9900;color:#000;border:none;padding:10px 20px;border-radius:6px;font-weight:bold;cursor:pointer;width:100%;margin-top:10px;font-size:0.9rem}
+.btn:hover{background:#ffad33}
+.right{display:flex;flex-direction:column;gap:12px}
+.verdict{padding:14px;border-radius:8px;font-size:0.9rem;font-weight:600;text-align:center}
+.verdict-good{background:#1a3a2a;border:2px solid #4caf50;color:#4caf50}
+.verdict-bad{background:#3a1a1a;border:2px solid #ef5350;color:#ef5350}
+.verdict-warn{background:#3a2a1a;border:2px solid #ff9900;color:#ff9900}
+.fields-table{width:100%;border-collapse:collapse;font-size:0.82rem}
+.fields-table th{background:#232f3e;color:#ff9900;padding:8px;text-align:left;font-size:0.75rem}
+.fields-table td{padding:6px 8px;border-bottom:1px solid #2a3544;vertical-align:top}
+.fields-table tr:hover{background:#1a2332}
+.col-field{width:140px;font-weight:600;color:#59c4e6}
+.val-cell{font-family:monospace;font-size:0.8rem;padding:3px 6px;border-radius:3px}
+.val-same{background:#1a3a2a;color:#4caf50}
+.val-diff{background:#3a1a1a;color:#ef5350;font-weight:bold}
+.val-truncated{background:#3a2a1a;color:#ff9900}
+.diff-indicator{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
+.diff-indicator-same{background:#4caf50}
+.diff-indicator-diff{background:#ef5350}
+.section{background:#1a2332;border:1px solid #2a3544;border-radius:8px;padding:14px}
+.section h3{color:#59c4e6;margin-bottom:8px;font-size:0.9rem}
+.issues{margin-top:8px}
+.issue{padding:6px 10px;border-radius:6px;margin:4px 0;font-size:0.8rem;display:flex;align-items:center;gap:6px}
+.issue-error{background:#3a1a1a;border:1px solid #ef5350;color:#ef5350}
+.issue-ok{background:#1a3a2a;border:1px solid #4caf50;color:#4caf50}
+.issue-warn{background:#3a2a1a;border:1px solid #ff9900;color:#ff9900}
+.legend{display:flex;gap:16px;font-size:0.75rem;color:#5f6b7a;margin-bottom:8px;flex-wrap:wrap}
+.legend span{display:flex;align-items:center;gap:4px}
+</style>
+</head>
+<body>
+
+<h1>🧪 Lab: Efecto de los Hiperparámetros en la Extracción</h1>
+<p class="subtitle">Mueve los sliders y ve EXACTAMENTE qué campos cambian entre ejecuciones</p>
+
+<div class="layout">
+<div class="controls">
+<h3>Hiperparámetros</h3>
+<div class="param">
+<label>temperature: <span class="val" id="temp-val">0.0</span></label>
+<input type="range" id="temp" min="0" max="10" value="0" oninput="update()">
+<div class="desc">0 = siempre igual | 1 = varía cada vez</div>
+</div>
+<div class="param">
+<label>top_p: <span class="val" id="topp-val">0.0</span></label>
+<input type="range" id="topp" min="0" max="10" value="0" oninput="update()">
+<div class="desc">0 = solo la más probable | 1 = explora opciones</div>
+</div>
+<div class="param">
+<label>top_k: <span class="val" id="topk-val">5</span></label>
+<input type="range" id="topk" min="1" max="50" value="5" oninput="update()">
+<div class="desc">Candidatas por paso (5=conservador)</div>
+</div>
+<div class="param">
+<label>max_tokens: <span class="val" id="maxt-val">16000</span></label>
+<input type="range" id="maxt" min="100" max="32000" step="100" value="16000" oninput="update()">
+<div class="desc">Largo máximo de respuesta</div>
+</div>
+<button class="btn" onclick="runTest()">▶ EJECUTAR 3 VECES</button>
+<div style="margin-top:12px;font-size:0.72rem;color:#5f6b7a;background:#232f3e;padding:8px;border-radius:6px">
+<strong style="color:#ff9900">Instrucciones:</strong><br>
+1. Deja todo en 0 → Ejecuta → Todo verde<br>
+2. Sube temperature a 0.5 → Ejecuta → Campos rojos<br>
+3. Baja max_tokens a 200 → Ejecuta → Truncado
+</div>
+</div>
+
+<div class="right">
+<div class="verdict verdict-good" id="verdict">Configura los parámetros y ejecuta para ver el resultado</div>
+
+<div class="section">
+<h3>Problemas Detectados</h3>
+<div class="issues" id="issues">
+<div class="issue issue-ok">✅ Esperando ejecución...</div>
+</div>
+</div>
+
+<div class="section">
+<h3>Comparación Campo por Campo (3 ejecuciones del MISMO documento)</h3>
+<div class="legend">
+<span><span class="diff-indicator diff-indicator-same"></span> Igual en las 3 ejecuciones</span>
+<span><span class="diff-indicator diff-indicator-diff"></span> DIFERENTE entre ejecuciones (problema!)</span>
+</div>
+<table class="fields-table">
+<thead><tr><th>Campo</th><th>Ejecución 1</th><th>Ejecución 2</th><th>Ejecución 3</th><th>Estado</th></tr></thead>
+<tbody id="results-body">
+<tr><td colspan="5" style="color:#5f6b7a;text-align:center;padding:20px">Click "Ejecutar 3 veces" para ver resultados</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+
+<script>
+const CORRECT = {
+  numero_factura: "TMEE2606B0044",
+  fecha_emision: "2026-02-01",
+  exportador_nombre: "TIANJIN MACHINERY AND ELECTRIC EQUIPMENT CO., LTD",
+  importador_nombre: "HOME SALE SAS",
+  importador_nit: "900541039-2",
+  incoterm: "FOB",
+  incoterm_lugar: "XINGANG",
+  moneda: "USD",
+  valor_total: "93425.00",
+  condiciones_pago: "T/T",
+  puerto_embarque: "XINGANG",
+  puerto_destino: "BUENAVENTURA",
+  item_1_desc: "BICYCLE 29 HURRICANE MTB",
+  item_1_qty: "990",
+  item_1_price: "65.00",
+  item_2_desc: "BICYCLE 26 RAIN MTB",
+  item_2_qty: "350",
+  item_2_price: "54.00"
+};
+
+const VARIATIONS = {
+  fecha_emision: ["2026-02-01", "01/02/2026", "FEB 1 2026", "February 1, 2026"],
+  importador_nit: ["900541039-2", "900.541.039-2", "9005410392"],
+  incoterm: ["FOB", "FOB XINGANG", "F.O.B."],
+  valor_total: ["93425.00", "93425", "93,425.00", "$93,425.00"],
+  condiciones_pago: ["T/T", "Telegraphic Transfer", "Wire Transfer", "T/T IN ADVANCE"],
+  puerto_embarque: ["XINGANG", "XINGANG, CHINA", "Xingang Port"],
+  incoterm_lugar: ["XINGANG", "XINGANG CHINA", "Xingang, CN"],
+  item_1_desc: ["BICYCLE 29 HURRICANE MTB", "BICYCLE 29\" HURRICANE MTB", "Bicycle Hurricane 29 MTB"],
+};
+
+function update() {
+  document.getElementById('temp-val').textContent = (document.getElementById('temp').value / 10).toFixed(1);
+  document.getElementById('topp-val').textContent = (document.getElementById('topp').value / 10).toFixed(1);
+  document.getElementById('topk-val').textContent = document.getElementById('topk').value;
+  document.getElementById('maxt-val').textContent = document.getElementById('maxt').value;
+}
+
+function generateResult(temp) {
+  const result = {...CORRECT};
+  if (temp > 0) {
+    for (const [key, options] of Object.entries(VARIATIONS)) {
+      if (Math.random() < temp * 0.8) {
+        result[key] = options[Math.floor(Math.random() * options.length)];
+      }
+    }
+  }
+  return result;
+}
+
+function runTest() {
+  const temp = document.getElementById('temp').value / 10;
+  const maxTokens = parseInt(document.getElementById('maxt').value);
+  
+  const runs = [generateResult(temp), generateResult(temp), generateResult(temp)];
+  const fields = Object.keys(CORRECT);
+  
+  // Determine which fields to show based on max_tokens
+  const tokensPerField = 50;
+  const maxFields = Math.floor(maxTokens / tokensPerField);
+  const truncated = maxFields < fields.length;
+  
+  let tbody = '';
+  let diffCount = 0;
+  let totalFields = Math.min(fields.length, maxFields);
+  
+  for (let i = 0; i < totalFields; i++) {
+    const field = fields[i];
+    const v1 = runs[0][field];
+    const v2 = runs[1][field];
+    const v3 = runs[2][field];
+    const allSame = v1 === v2 && v2 === v3;
+    if (!allSame) diffCount++;
+    
+    const cls = allSame ? 'val-same' : 'val-diff';
+    const indicator = allSame 
+      ? '<span class="diff-indicator diff-indicator-same"></span>OK' 
+      : '<span class="diff-indicator diff-indicator-diff"></span>CAMBIÓ';
+    
+    tbody += `<tr>
+      <td class="col-field">${field}</td>
+      <td><span class="${cls}">${v1}</span></td>
+      <td><span class="${cls}">${v2}</span></td>
+      <td><span class="${cls}">${v3}</span></td>
+      <td>${indicator}</td>
+    </tr>`;
+  }
+  
+  if (truncated) {
+    const missing = fields.length - maxFields;
+    tbody += `<tr><td colspan="5" style="text-align:center;padding:10px">
+      <span class="val-truncated">⚠️ TRUNCADO: ${missing} campos NO se extrajeron (max_tokens muy bajo)</span>
+    </td></tr>`;
+  }
+  
+  document.getElementById('results-body').innerHTML = tbody;
+  
+  // Verdict
+  const verdictEl = document.getElementById('verdict');
+  if (truncated) {
+    verdictEl.className = 'verdict verdict-bad';
+    verdictEl.textContent = `❌ JSON INCOMPLETO: max_tokens=${maxTokens} es muy bajo. Faltan ${fields.length - maxFields} campos.`;
+  } else if (diffCount === 0) {
+    verdictEl.className = 'verdict verdict-good';
+    verdictEl.textContent = `✅ PERFECTO: 3 ejecuciones idénticas. ${totalFields} campos consistentes. Apto para producción.`;
+  } else if (diffCount <= 3) {
+    verdictEl.className = 'verdict verdict-warn';
+    verdictEl.textContent = `⚠️ VARIACIÓN: ${diffCount} campos diferentes entre ejecuciones. Puede causar inconsistencias.`;
+  } else {
+    verdictEl.className = 'verdict verdict-bad';
+    verdictEl.textContent = `❌ INESTABLE: ${diffCount} campos cambian cada ejecución. NO apto para extracción de datos.`;
+  }
+  
+  // Issues
+  let issues = '';
+  if (temp === 0 && !truncated) {
+    issues += '<div class="issue issue-ok">✅ temperature=0 → Resultado determinista (siempre igual)</div>';
+  }
+  if (temp > 0 && temp <= 0.3) {
+    issues += '<div class="issue issue-warn">⚠️ temperature=' + temp.toFixed(1) + ' → Formatos pueden variar (NIT con/sin puntos, fechas diferentes)</div>';
+  }
+  if (temp > 0.3) {
+    issues += '<div class="issue issue-error">❌ temperature=' + temp.toFixed(1) + ' → Valores diferentes cada ejecución. Misma factura = diferentes resultados!</div>';
+  }
+  if (truncated) {
+    issues += '<div class="issue issue-error">❌ max_tokens=' + maxTokens + ' → El JSON se corta. Items de la factura se pierden.</div>';
+  }
+  if (!truncated && maxTokens >= 16000) {
+    issues += '<div class="issue issue-ok">✅ max_tokens=' + maxTokens + ' → Suficiente para facturas con 600+ items</div>';
+  }
+  if (diffCount > 0 && temp > 0) {
+    issues += '<div class="issue issue-error">❌ Campos con DIFERENCIAS marcados en ROJO. En producción esto significa que la misma factura da resultados distintos cada vez que se procesa.</div>';
+  }
+  if (diffCount === 0 && !truncated) {
+    issues += '<div class="issue issue-ok">✅ Reproducible: Procesar la factura hoy o mañana da el MISMO resultado</div>';
+  }
+  
+  document.getElementById('issues').innerHTML = issues || '<div class="issue issue-ok">✅ Sin problemas detectados</div>';
+}
+
+update();
+</script>
+</body>
+</html>

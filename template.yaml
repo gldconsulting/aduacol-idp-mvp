@@ -1,0 +1,191 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Lab Bedrock ADUACOL - Demuestra el efecto de hiperparametros en la extraccion'
+
+Parameters:
+  ModelId:
+    Type: String
+    Default: us.amazon.nova-lite-v1:0
+    Description: Modelo Bedrock a usar
+
+Resources:
+  # S3 Bucket para el documento de prueba
+  DocumentsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'lab-bedrock-documents-${AWS::AccountId}'
+
+  # Lambda que ejecuta extraccion N veces con hiperparametros configurables
+  ExtractWithParamsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: lab-bedrock-EJECUTAR-TEST
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref DocumentsBucket
+          MODEL_ID: !Ref ModelId
+      InlineCode: |
+        import boto3
+        import json
+        import os
+        import time
+
+        textract = boto3.client('textract')
+        bedrock = boto3.client('bedrock-runtime')
+        s3 = boto3.client('s3')
+
+        PROMPT = """You are a Colombian customs document extraction specialist.
+        Extract structured data from this trade document. Respond ONLY with valid JSON.
+        Normalize dates to YYYY-MM-DD. Extract monetary values as plain numbers.
+        If a field is not found, return null.
+
+        Extract these fields:
+        - numero_factura (invoice number)
+        - fecha_emision (date, YYYY-MM-DD)
+        - exportador_nombre (seller/exporter)
+        - importador_nombre (buyer/importer)
+        - importador_nit (Colombian NIT, remove dots)
+        - incoterm (FOB, CIF, CFR, etc.)
+        - incoterm_lugar (location after incoterm)
+        - moneda (currency code)
+        - valor_total (total amount as number)
+        - condiciones_pago (payment terms)
+        - puerto_embarque (port of loading)
+        - puerto_destino (port of discharge)
+
+        Document text:
+        {document_text}
+
+        JSON:"""
+
+        def extract_once(doc_text, model_id, temperature, top_p, top_k, max_tokens):
+            """Single extraction call with specific hyperparameters."""
+            prompt = PROMPT.format(document_text=doc_text[:8000])
+
+            body = {
+                "messages": [{"role": "user", "content": [{"text": prompt}]}],
+                "inferenceConfig": {"maxTokens": max_tokens}
+            }
+            # Only add temperature/topP if > 0 (Nova requires this)
+            if temperature > 0:
+                body["inferenceConfig"]["temperature"] = temperature
+            if top_p > 0:
+                body["inferenceConfig"]["topP"] = top_p
+
+            response = bedrock.invoke_model(
+                modelId=model_id,
+                contentType='application/json',
+                accept='application/json',
+                body=json.dumps(body)
+            )
+
+            result = json.loads(response['body'].read())
+            text = result['output']['message']['content'][0]['text']
+
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                start = text.find('{')
+                end = text.rfind('}') + 1
+                if start >= 0:
+                    return json.loads(text[start:end])
+                return {"error": "parse_failed", "raw": text[:500]}
+
+        def compare_runs(runs):
+            """Compare field values across multiple runs."""
+            all_keys = set()
+            for r in runs:
+                all_keys.update(r.keys())
+
+            comparison = {}
+            for key in sorted(all_keys):
+                values = [str(r.get(key, "null")) for r in runs]
+                all_same = len(set(values)) == 1
+                comparison[key] = {
+                    "values": values,
+                    "consistent": all_same,
+                    "status": "SAME" if all_same else "DIFFERENT"
+                }
+            return comparison
+
+        def handler(event, context):
+            bucket = os.environ['BUCKET_NAME']
+            model_id = os.environ['MODEL_ID']
+
+            # Hyperparameters from event (or defaults = deterministic)
+            temperature = float(event.get('temperature', 0))
+            top_p = float(event.get('top_p', 0))
+            top_k = int(event.get('top_k', 5))
+            max_tokens = int(event.get('max_tokens', 16000))
+            num_runs = int(event.get('num_runs', 3))
+            s3_key = event.get('s3_key', 'input/sample.pdf')
+
+            # Step 1: OCR
+            try:
+                textract_response = textract.detect_document_text(
+                    Document={'S3Object': {'Bucket': bucket, 'Name': s3_key}}
+                )
+                doc_text = '\n'.join(
+                    b['Text'] for b in textract_response['Blocks'] if b['BlockType'] == 'LINE'
+                )
+            except Exception as e:
+                return {'error': f'OCR failed: {str(e)}', 'hint': f'Upload a PDF to s3://{bucket}/{s3_key}'}
+
+            # Step 2: Run extraction N times with same hyperparameters
+            runs = []
+            for i in range(num_runs):
+                result = extract_once(doc_text, model_id, temperature, top_p, top_k, max_tokens)
+                runs.append(result)
+                time.sleep(0.5)  # Small delay between calls
+
+            # Step 3: Compare
+            comparison = compare_runs(runs)
+            inconsistent = [k for k, v in comparison.items() if not v['consistent']]
+
+            return {
+                'hyperparameters': {
+                    'temperature': temperature,
+                    'top_p': top_p,
+                    'top_k': top_k,
+                    'max_tokens': max_tokens,
+                    'model_id': model_id
+                },
+                'num_runs': num_runs,
+                'total_fields': len(comparison),
+                'consistent_fields': len(comparison) - len(inconsistent),
+                'inconsistent_fields': len(inconsistent),
+                'inconsistent_field_names': inconsistent,
+                'verdict': 'DETERMINISTIC' if not inconsistent else f'NON-DETERMINISTIC ({len(inconsistent)} fields vary)',
+                'comparison': comparison,
+                'raw_runs': runs
+            }
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref DocumentsBucket
+        - Statement:
+            - Effect: Allow
+              Action: textract:DetectDocumentText
+              Resource: '*'
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/${ModelId}'
+
+Outputs:
+  TestFunction:
+    Description: "Lambda para ejecutar el test de hiperparametros"
+    Value: !Ref ExtractWithParamsFunction
+  DocumentsBucket:
+    Description: "Bucket S3 - subir PDFs a input/"
+    Value: !Ref DocumentsBucket
+  Usage:
+    Description: "Ejemplo de invocacion"
+    Value: !Sub |
+      # Test DETERMINISTICO (todo en 0):
+      aws lambda invoke --function-name lab-bedrock-EJECUTAR-TEST --payload '{"temperature":0,"top_p":0,"num_runs":3}' --profile 3htp-col out.json
+      
+      # Test NO-DETERMINISTICO (temperature=0.5):
+      aws lambda invoke --function-name lab-bedrock-EJECUTAR-TEST --payload '{"temperature":0.5,"top_p":0.9,"num_runs":3}' --profile 3htp-col out.json
