@@ -1,0 +1,13 @@
+ocr:
+  backend: textract
+  model_id: us.amazon.nova-2-lite-v1:0
+  system_prompt: You are an expert OCR system. Extract all text from the provided image accurately, preserving layout where possible.
+  task_prompt: Extract all text from this document image. Preserve the layout, including paragraphs, tables, and formatting.
+  features:
+  - name: LAYOUT
+  max_workers: 20
+  image:
+    target_width: null
+    target_height: null
+    dpi: null
+    preprocessing: null

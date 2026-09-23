@@ -1,0 +1,7 @@
+queue_sender:
+  allowed_extensions:
+    - .pdf
+    - .png
+    - .jpg
+    - .jpeg
+    - .gif

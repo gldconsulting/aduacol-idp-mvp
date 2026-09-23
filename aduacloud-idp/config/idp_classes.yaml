@@ -1,0 +1,186 @@
+classes:
+- $schema: https://json-schema.org/draft/2020-12/schema
+  description: 'Commercial invoice for international trade operations (import/export/transit). Contains seller and buyer information, itemized goods with prices, trade terms (incoterms), and total values. May be in English, Spanish, Chinese, or bilingual. Common headers: COMMERCIAL INVOICE, INVOICE, FACTURA COMERCIAL, PROFORMA. Common issuers include Chinese trading companies exporting to Colombia. Key identifiers: invoice number, date, buyer/seller names, item table with quantities and prices, total amount, incoterm (FOB, CFR, CIF).'
+  type: object
+  x-aws-idp-document-type: FACTURA_COMERCIAL
+  required:
+  - numero_factura
+  - termino_negociacion
+  properties:
+    numero_factura:
+      type: string
+      description: 'Invoice number or reference. Alphanumeric, varies widely in format. Also labeled as: Invoice No., Factura No., Ref., Invoice Number. THIS FIELD IS REQUIRED - the system needs it to match against its records.'
+    importador_nombre:
+      type: string
+      description: 'Full legal name of the importer/buyer. May be a company (SAS, LTDA) or a natural person. Also labeled as: Buyer, Consignee, To, Cliente. For IMPO and DTA operations this is REQUIRED. For EXPO operations, look for exportador_nombre instead.'
+    exportador_nombre:
+      type: string
+      description: 'Full legal name of the exporter/seller/shipper company. Also labeled as: Seller, Shipper, Beneficiary, From, Exporter. For EXPO operations this is REQUIRED.'
+    termino_negociacion:
+      type: string
+      description: 'Trade term (incoterm) COMPLETE: code + delivery location. Also labeled as: Incoterm, Terms, Trade Terms, Condiciones. IMPORTANT: Extract the FULL incoterm including the delivery place/port. Examples: "FOB Ningbo", "CIF Cartagena", "CFR Buenaventura", "EXW Shanghai", "FOB Shenzhen China", "CIF Bogota". If only the code is visible without a location, extract just the code (e.g., "FOB"). THIS FIELD IS REQUIRED for all operation types.'
+    valor_total_usd:
+      type: number
+      description: 'Total invoice value in US dollars. This is the GRAND TOTAL of the invoice including ALL charges: goods value + freight + insurance + other charges. Also labeled as: Total, Grand Total, Amount Due, Total Amount, Valor Total, Total Invoice Value, Net Amount, Total CIF, Total CFR. IMPORTANT: If the invoice shows a breakdown (FOB + Freight + Insurance + Other), extract the FINAL TOTAL that sums all components, not just the goods subtotal. If there is a separate "Total CIF" or "Total CFR" line, use that value. REQUIRED for EXPO and DTA operations.'
+    valor_fob:
+      type: number
+      description: 'FOB value (goods value without freight/insurance). This is the value of goods only. Also labeled as: Subtotal, FOB Value, FOB Amount, Valor Mercancía, Goods Value. In CIF/CFR invoices, this is the subtotal BEFORE adding freight and insurance. REQUIRED for DTA operations to verify FOB is reflected.'
+    otros_gastos:
+      type: number
+      description: 'Other charges/costs in the invoice beyond FOB, freight, and insurance. Also labeled as: Other Charges, Gastos Origen, Origin Charges, Handling, Documentation Fee, THC, Local Charges. Extract as a number. Return null if not present.'
+    condiciones_pago:
+      type: string
+      description: 'Payment terms or conditions stated in the invoice. Also labeled as: Payment Terms, Payment Conditions, Condiciones de Pago, Terms of Payment, Forma de Pago, Plazo de Pago. Examples: "30 days after shipment", "T/T 100 percent in advance", "50 percent advance, 50 percent against BL", "Letter of Credit at sight", "NET 60 DAYS", "CAD (Cash Against Documents)". Extract the full text of the payment condition as stated.'
+    fecha_emision:
+      type: string
+      description: Invoice issue date. Normalize to YYYY-MM-DD.
+    moneda:
+      type: string
+      description: Currency code (typically USD).
+    importador_nit:
+      type: string
+      description: Colombian NIT of the importer. Normalize removing dots, keep hyphen and verification digit (e.g., "900541039-2").
+    exportador_pais:
+      type: string
+      description: Country of the exporter (e.g., CHINA, TAIWAN, PANAMA).
+    puerto_embarque:
+      type: string
+      description: Port of loading/shipment.
+    puerto_destino:
+      type: string
+      description: Port of destination/discharge.
+    valor_flete:
+      type: number
+      description: Ocean freight cost (present in CFR and CIF invoices).
+    valor_seguro:
+      type: number
+      description: Insurance cost (present only in CIF invoices).
+    numero_bultos:
+      type: integer
+      description: Total number of packages/cartons/cases.
+    peso_bruto_kg:
+      type: number
+      description: Gross weight in kilograms.
+    items:
+      type: array
+      description: List of line items in the invoice.
+      items:
+        type: object
+        properties:
+          descripcion:
+            type: string
+            description: Product description.
+          cantidad:
+            type: number
+            description: Quantity.
+          unidad_medida:
+            type: string
+            description: Unit of measure (PCS, SET, KG, DOCENA, CTN).
+          valor_unitario:
+            type: number
+            description: Unit price.
+          valor_total_item:
+            type: number
+            description: Total value for this line item.
+- $schema: https://json-schema.org/draft/2020-12/schema
+  description: 'Bill of Lading (B/L) - maritime transport document. May be Master BL (issued by shipping line like Evergreen, CMA CGM, MSC, WAN HAI) or House BL (issued by freight forwarder like Red Cargo, BVT Trade). Common headers: BILL OF LADING, B/L, CONOCIMIENTO DE EMBARQUE, HBL, MBL. Key identifiers: BL number, shipper, consignee, notify party, vessel name, port of loading, port of discharge, container numbers, weight, packages. Used for IMPO and DTA operations only.'
+  type: object
+  x-aws-idp-document-type: BILL_OF_LADING
+  required:
+  - bl_number
+  - consignee_nombre
+  - administracion_aduana
+  properties:
+    bl_number:
+      type: string
+      description: 'Bill of Lading number. Unique identifier. Also labeled as: B/L No., BL Number, Document Number, HBL No., MBL No. THIS FIELD IS REQUIRED - must match doc_transporte_bl in the system.'
+    consignee_nombre:
+      type: string
+      description: 'Name of the consignee (receiver of goods). This is the importador or consignatario depending on the operation type. Also labeled as: Consignee, Consigned to, Consignatario, Importador. May be "TO ORDER" for negotiable BLs. THIS FIELD IS REQUIRED - used to verify importador identity.'
+    administracion_aduana:
+      type: string
+      description: 'ADUANA DE LLEGADA (Port of Discharge). This field represents the customs administration where the cargo arrives and will be nationalized. Extract the destination port name from the BL. Also labeled as: Port of Discharge, POD, Puerto de Descarga, Port of Destination, Lugar de Entrega, Place of Delivery. Examples: BUENAVENTURA, CARTAGENA, BARRANQUILLA, SANTA MARTA. THIS FIELD IS REQUIRED - must match Administración o Aduana de Llegada in system. Note: The system maps port names to DIAN customs codes (e.g., BUENAVENTURA = 35).'
+    endoso:
+      type: object
+      description: |-
+        CRITICAL: Endorsement (endoso) information. This is one of the most important fields for Colombian customs operations. The endorsement transfers BL rights from the original consignee to another party (the actual importer). SEARCH CAREFULLY for text blocks containing "endoso", "endosado", "endosar", "se endosa", "se cede". The endorsement typically appears as: - A SEPARATE text block overlaid/stamped on the BL (often different font/ink) - On the SECOND PAGE of a scanned BL - Near the consignee area or at the bottom/back of the document - Structure: "Yo [representante], Representante legal de [empresa_original]...
+          Endoso el presente documento BL [numero]... a: [empresa_destino] con NIT: [nit]"
+        - May also appear as just: "[empresa_destino] NIT [nit] - ENDOSADO" If the importador in the system ≠ consignee in BL, the endorsement is what proves the transfer of rights. Return null ONLY if no endorsement text exists.
+      properties:
+        endoso_empresa_destino:
+          type: string
+          description: 'Name of the company/person TO WHOM the BL is endorsed (the NEW owner/importer). This is the key field - appears after "a:" or "a favor de" in the endorsement text. Examples: "FLEX INDUSTRIAL SAS", "SERVICIOS GRAY MACHINES S.A.S.", "GABILU 360 SAS"'
+        endoso_nit_destino:
+          type: string
+          description: NIT of the destination company. Normalize removing dots, keep hyphen+digit. Appears after "con NIT:", "NIT:", or "CC:" in the endorsement text.
+    tipo_transito:
+      type: string
+      description: |-
+        Type of transit operation identified in the BL. Determines if the cargo is under OTM (Operación de Tránsito Multimodal) or DTA (Declaración de Tránsito Aduanero) or Continuación de Viaje. SEARCH in CONSIGNEE, NOTIFY PARTY, and DESCRIPTION OF GOODS for these EXACT phrases (case-insensitive): - "mercancía en continuación de viaje" → return "CONTINUACION_VIAJE" - "mercancía en OTM" → return "OTM" - "mercancía en tránsito nacional" → return "DTA" - "mercancía en DTA" → return "DTA" - "mercancía en tránsito aduanero" → return "DTA" Additional indicators: - If consignee mentions a "depósito aduanero", "zona franca", or
+          "almacén" in a DIFFERENT city than the port of discharge → likely OTM/DTA
+        - If consignee says "TO ORDER" or mentions a freight forwarder/agent instead
+          of the final importer, it may indicate OTM/DTA
+        - If place of delivery ≠ port of discharge → likely OTM Return one of: "OTM", "DTA", "CONTINUACION_VIAJE", or null if none found.
+    tipo_bl:
+      type: string
+      description: |-
+        Type and mode of transport document. Classify based on document content: MARITIME: "MASTER_BL" (issued by shipping line: Evergreen, CMA CGM, MSC, WAN HAI, etc.)
+                  or "HOUSE_BL" (issued by freight forwarder: Red Cargo, BVT Trade, etc.)
+        AEREO: "GUIA_AEREA" (Air Waybill / AWB - look for "Air Waybill", "AWB",
+                "Guía Aérea", airline names, flight numbers)
+        TERRESTRE: "CARTA_PORTE" (look for "Carta Porte", "Manifiesto de Carga",
+                   "CMR", overland transport indicators)
+        Return one of: "MASTER_BL", "HOUSE_BL", "GUIA_AEREA", "CARTA_PORTE". This classification helps determine which Incoterms are valid for the operation.
+    fecha_emision:
+      type: string
+      description: Date of issue or "Shipped on Board" date. Normalize to YYYY-MM-DD.
+    shipper_nombre:
+      type: string
+      description: Name of the shipper/exporter.
+    consignee_nit:
+      type: string
+      description: Colombian NIT of the consignee. Normalize removing dots.
+    notify_party_nombre:
+      type: string
+      description: Name of the notify party.
+    vessel_name:
+      type: string
+      description: Name of the vessel/ship.
+    port_of_loading:
+      type: string
+      description: Port where cargo was loaded.
+    contenedores:
+      type: array
+      description: |-
+        List of ALL containers in the BL. IMPORTANT: Extract EVERY container listed. Containers may appear in different formats: - As a table with columns (Container No, Type, Seal) - As text lines in Description of Goods section, formatted like:
+          "FFAU6285198/R9838365/40HQ/392PACKAGES/7561KGS/68CBM"
+        - The format is: CONTAINER_NUMBER/SEAL/TYPE/PACKAGES/WEIGHT/CBM - Look for the header "40HQ*4" or similar that indicates total container count - Cross-check: the number of containers you extract MUST match the count
+          indicated (e.g., "40HQ*4" means exactly 4 containers)
+        - Containers may also be listed under "Marks & Nos" or "Container/Seal No." Extract ALL of them - do not skip any.
+      items:
+        type: object
+        properties:
+          numero:
+            type: string
+            description: 'Container number. Format: 4 letters + 7 digits (e.g., FFAU6285198, FCIU9785189).'
+          tipo:
+            type: string
+            description: Container type (e.g., 40HQ, 20GP, 40SD96).
+          seal:
+            type: string
+            description: Seal number (e.g., R9838365, WHLU314868).
+    peso_bruto:
+      type: number
+      description: Gross weight of cargo.
+    peso_bruto_unidad:
+      type: string
+      description: Unit of gross weight (KGS, KGM, MTS).
+    numero_bultos:
+      type: integer
+      description: Total number of packages.
+    descripcion_mercancia:
+      type: string
+      description: General description of goods.
+    freight_status:
+      type: string
+      description: Freight payment status (PREPAID or COLLECT).

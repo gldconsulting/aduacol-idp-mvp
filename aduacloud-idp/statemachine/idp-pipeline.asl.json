@@ -1,0 +1,367 @@
+{
+    "StartAt": "OCRStep",
+    "States": {
+        "OCRStep": {
+            "Type": "Task",
+            "Resource": "${OCRFunctionArn}",
+            "Parameters": {
+                "execution_arn.$": "$$.Execution.Id",
+                "document.$": "$.document"
+            },
+            "ResultPath": "$.OCRResult",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "Sandbox.Timedout",
+                        "Lambda.ServiceException",
+                        "Lambda.AWSLambdaException",
+                        "Lambda.SdkClientException",
+                        "Lambda.TooManyRequestsException",
+                        "ServiceQuotaExceededException",
+                        "ThrottlingException",
+                        "ProvisionedThroughputExceededException",
+                        "RequestLimitExceeded",
+                        "ServiceUnavailableException"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 2
+                }
+            ],
+            "Catch": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "ResultPath": "$.error",
+                    "Next": "WorkflowFailed"
+                }
+            ],
+            "Next": "ClassificationStep"
+        },
+        "ClassificationStep": {
+            "Type": "Task",
+            "Resource": "${ClassificationFunctionArn}",
+            "Parameters": {
+                "execution_arn.$": "$$.Execution.Id",
+                "OCRResult.$": "$.OCRResult"
+            },
+            "ResultPath": "$.ClassificationResult",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "Sandbox.Timedout",
+                        "Lambda.ServiceException",
+                        "Lambda.AWSLambdaException",
+                        "Lambda.SdkClientException",
+                        "Lambda.TooManyRequestsException",
+                        "ServiceQuotaExceededException",
+                        "ThrottlingException",
+                        "ProvisionedThroughputExceededException",
+                        "RequestLimitExceeded",
+                        "ServiceUnavailableException"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 10,
+                    "BackoffRate": 2
+                }
+            ],
+            "Catch": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "ResultPath": "$.error",
+                    "Next": "WorkflowFailed"
+                }
+            ],
+            "Next": "ProcessSections"
+        },
+        "ProcessSections": {
+            "Type": "Map",
+            "ItemsPath": "$.ClassificationResult.document.sections",
+            "ItemSelector": {
+                "execution_arn.$": "$$.Execution.Id",
+                "document.$": "$.ClassificationResult.document",
+                "section_id.$": "$$.Map.Item.Value"
+            },
+            "MaxConcurrency": 10,
+            "Iterator": {
+                "StartAt": "ExtractionStep",
+                "States": {
+                    "ExtractionStep": {
+                        "Type": "Task",
+                        "Resource": "${ExtractionFunctionArn}",
+                        "Parameters": {
+                            "execution_arn.$": "$$.Execution.Id",
+                            "document.$": "$.document",
+                            "section_id.$": "$.section_id"
+                        },
+                        "ResultPath": "$",
+                        "Retry": [
+                            {
+                                "ErrorEquals": [
+                                    "Sandbox.Timedout",
+                                    "Lambda.ServiceException",
+                                    "Lambda.AWSLambdaException",
+                                    "Lambda.SdkClientException",
+                                    "Lambda.TooManyRequestsException",
+                                    "ServiceQuotaExceededException",
+                                    "ThrottlingException",
+                                    "ProvisionedThroughputExceededException",
+                                    "RequestLimitExceeded",
+                                    "ServiceUnavailableException"
+                                ],
+                                "IntervalSeconds": 2,
+                                "MaxAttempts": 10,
+                                "BackoffRate": 2
+                            }
+                        ],
+                        "Catch": [
+                            {
+                                "ErrorEquals": [
+                                    "States.ALL"
+                                ],
+                                "ResultPath": "$.error",
+                                "Next": "SectionFailed"
+                            }
+                        ],
+                        "Next": "CheckAssessmentEnabled"
+                    },
+                    "CheckAssessmentEnabled": {
+                        "Type": "Choice",
+                        "Choices": [
+                            {
+                                "Variable": "$.assessment_enabled",
+                                "BooleanEquals": true,
+                                "Next": "AssessmentStep"
+                            }
+                        ],
+                        "Default": "SectionComplete"
+                    },
+                    "AssessmentStep": {
+                        "Type": "Task",
+                        "Resource": "${AssessmentFunctionArn}",
+                        "Parameters": {
+                            "execution_arn.$": "$$.Execution.Id",
+                            "document.$": "$.document",
+                            "section_id.$": "$.section_id"
+                        },
+                        "ResultPath": "$",
+                        "Retry": [
+                            {
+                                "ErrorEquals": [
+                                    "Sandbox.Timedout",
+                                    "Lambda.ServiceException",
+                                    "Lambda.AWSLambdaException",
+                                    "Lambda.SdkClientException",
+                                    "Lambda.TooManyRequestsException",
+                                    "ServiceQuotaExceededException",
+                                    "ThrottlingException",
+                                    "ProvisionedThroughputExceededException",
+                                    "RequestLimitExceeded",
+                                    "ServiceUnavailableException"
+                                ],
+                                "IntervalSeconds": 2,
+                                "MaxAttempts": 10,
+                                "BackoffRate": 2
+                            }
+                        ],
+                        "Catch": [
+                            {
+                                "ErrorEquals": [
+                                    "States.ALL"
+                                ],
+                                "ResultPath": "$.error",
+                                "Next": "SectionFailed"
+                            }
+                        ],
+                        "Next": "SectionComplete"
+                    },
+                    "SectionComplete": {
+                        "Type": "Pass",
+                        "End": true
+                    },
+                    "SectionFailed": {
+                        "Type": "Fail",
+                        "Error": "SectionProcessingFailed",
+                        "Cause": "Section processing failed"
+                    }
+                }
+            },
+            "ResultPath": "$.ExtractionResults",
+            "Next": "ProcessResultsStep"
+        },
+        "ProcessResultsStep": {
+            "Type": "Task",
+            "Resource": "${ProcessResultsLambdaArn}",
+            "Parameters": {
+                "execution_arn.$": "$$.Execution.Id",
+                "ClassificationResult.$": "$.ClassificationResult",
+                "ExtractionResults.$": "$.ExtractionResults"
+            },
+            "ResultPath": "$.ProcessResult",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "Sandbox.Timedout",
+                        "Lambda.ServiceException",
+                        "Lambda.AWSLambdaException",
+                        "Lambda.SdkClientException",
+                        "Lambda.TooManyRequestsException",
+                        "ServiceQuotaExceededException",
+                        "ThrottlingException",
+                        "ProvisionedThroughputExceededException",
+                        "RequestLimitExceeded",
+                        "ServiceUnavailableException"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 10,
+                    "BackoffRate": 2
+                }
+            ],
+            "Catch": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "ResultPath": "$.error",
+                    "Next": "WorkflowFailed"
+                }
+            ],
+            "Next": "CheckRuleValidationEnabled"
+        },
+        "CheckRuleValidationEnabled": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Variable": "$.ProcessResult.rule_validation_enabled",
+                    "BooleanEquals": true,
+                    "Next": "ProcessRuleValidationSections"
+                }
+            ],
+            "Default": "CheckHITLRequired"
+        },
+        "ProcessRuleValidationSections": {
+            "Type": "Map",
+            "ItemsPath": "$.ProcessResult.document.sections",
+            "ItemSelector": {
+                "execution_arn.$": "$$.Execution.Id",
+                "document.$": "$.ProcessResult.document",
+                "section_id.$": "$$.Map.Item.Value"
+            },
+            "MaxConcurrency": 10,
+            "Iterator": {
+                "StartAt": "RuleValidationStep",
+                "States": {
+                    "RuleValidationStep": {
+                        "Type": "Task",
+                        "Resource": "${RuleValidationLambdaArn}",
+                        "Parameters": {
+                            "execution_arn.$": "$$.Execution.Id",
+                            "document.$": "$.document",
+                            "section_id.$": "$.section_id"
+                        },
+                        "ResultPath": "$",
+                        "Retry": [
+                            {
+                                "ErrorEquals": [
+                                    "Lambda.ServiceException",
+                                    "Lambda.AWSLambdaException",
+                                    "Lambda.SdkClientException",
+                                    "Lambda.TooManyRequestsException",
+                                    "ServiceQuotaExceededException",
+                                    "ThrottlingException",
+                                    "ProvisionedThroughputExceededException",
+                                    "RequestLimitExceeded",
+                                    "ServiceUnavailableException"
+                                ],
+                                "IntervalSeconds": 2,
+                                "MaxAttempts": 10,
+                                "BackoffRate": 2
+                            }
+                        ],
+                        "Catch": [
+                            {
+                                "ErrorEquals": [
+                                    "States.ALL"
+                                ],
+                                "ResultPath": "$.error",
+                                "Next": "RuleValidationSectionFailed"
+                            }
+                        ],
+                        "Next": "RuleValidationSectionComplete"
+                    },
+                    "RuleValidationSectionComplete": {
+                        "Type": "Pass",
+                        "End": true
+                    },
+                    "RuleValidationSectionFailed": {
+                        "Type": "Fail",
+                        "Error": "RuleValidationSectionFailed",
+                        "Cause": "Rule validation section failed"
+                    }
+                }
+            },
+            "ResultPath": "$.RuleValidationResults",
+            "Next": "CheckHITLRequired"
+        },
+        "CheckHITLRequired": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Variable": "$.ProcessResult.hitl_triggered",
+                    "BooleanEquals": true,
+                    "Next": "MarkHITLPending"
+                }
+            ],
+            "Default": "WorkflowComplete"
+        },
+        "MarkHITLPending": {
+            "Type": "Pass",
+            "Comment": "Document flagged for HITL review; pipeline continues without blocking",
+            "Next": "WorkflowComplete"
+        },
+        "WorkflowComplete": {
+            "Type": "Task",
+            "Resource": "${CompletionFunctionArn}",
+            "Parameters": {
+                "execution_arn.$": "$$.Execution.Id",
+                "document.$": "$.ProcessResult.document"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "Lambda.ServiceException",
+                        "Lambda.AWSLambdaException",
+                        "Lambda.SdkClientException",
+                        "Lambda.TooManyRequestsException",
+                        "ServiceQuotaExceededException",
+                        "ThrottlingException"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 2
+                }
+            ],
+            "Catch": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "Next": "WorkflowCompleteEnd"
+                }
+            ],
+            "End": true
+        },
+        "WorkflowCompleteEnd": {
+            "Type": "Pass",
+            "End": true
+        },
+        "WorkflowFailed": {
+            "Type": "Fail",
+            "Error": "WorkflowFailed",
+            "Cause": "Workflow processing failed"
+        }
+    }
+}
