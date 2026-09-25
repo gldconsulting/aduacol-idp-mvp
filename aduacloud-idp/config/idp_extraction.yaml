@@ -25,8 +25,10 @@ extraction:
         (e.g., "FOB Ningbo" not just "FOB")
     13. PAYMENT TERMS: Look for payment conditions anywhere in the document, including
         footer areas, notes sections, or separate "Terms" blocks
-    14. TRANSIT TYPE (BL only): Analyze Consignee and Notify Party to determine if cargo
-        is OTM or DTA. If consignee is "TO ORDER" or a bank/agent, it likely indicates transit.
+    14. TRANSIT TYPE (BL only): Set tipo_transito to "DTA" or "OTM" ONLY if the document text
+        literally mentions it (see the tipo_transito field description). Do NOT infer it from
+        "TO ORDER", banks/agents, zona franca, or delivery-place differences — if it is not
+        stated literally, return null. The transactional system decides the type otherwise.
     15. ITEMS — CRITICAL ANTI-HALLUCINATION RULES:
         a) Extract ONLY items that are EXPLICITLY VISIBLE in the document text/image.
         b) NEVER generate, repeat, or fabricate items that are not in the source document.
@@ -42,6 +44,14 @@ extraction:
            you can see clearly and STOP. It is better to have 200 correct items than 900
            with 700 hallucinated.
         h) NEVER pad the output with repeated items to "fill" the expected count.
+        i) ANCHOR THE COUNT FIRST (mandatory for long documents): Before extracting, find the
+           HIGHEST line/item number printed in the document (e.g. the last "S.No", "Item No",
+           "No.", or row number). Call it MAX_LINE. Your items array MUST NOT contain more than
+           MAX_LINE entries. If you have already output MAX_LINE items, STOP — do not add more.
+        j) NO CONSECUTIVE DUPLICATES: never output two or more consecutive items that are
+           identical in description AND quantity AND unit price. If the source truly repeats a
+           product, it will differ in at least line number, quantity, or price. Identical
+           back-to-back rows are a hallucination signal — stop and re-read the source.
     </extraction-guidelines>
     <attributes> {ATTRIBUTE_NAMES_AND_DESCRIPTIONS} </attributes>
     <<CACHEPOINT>>

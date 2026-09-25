@@ -116,11 +116,7 @@ classes:
     tipo_transito:
       type: string
       description: |-
-        Type of transit operation identified in the BL. Determines if the cargo is under OTM (Operación de Tránsito Multimodal) or DTA (Declaración de Tránsito Aduanero) or Continuación de Viaje. SEARCH in CONSIGNEE, NOTIFY PARTY, and DESCRIPTION OF GOODS for these EXACT phrases (case-insensitive): - "mercancía en continuación de viaje" → return "CONTINUACION_VIAJE" - "mercancía en OTM" → return "OTM" - "mercancía en tránsito nacional" → return "DTA" - "mercancía en DTA" → return "DTA" - "mercancía en tránsito aduanero" → return "DTA" Additional indicators: - If consignee mentions a "depósito aduanero", "zona franca", or
-          "almacén" in a DIFFERENT city than the port of discharge → likely OTM/DTA
-        - If consignee says "TO ORDER" or mentions a freight forwarder/agent instead
-          of the final importer, it may indicate OTM/DTA
-        - If place of delivery ≠ port of discharge → likely OTM Return one of: "OTM", "DTA", "CONTINUACION_VIAJE", or null if none found.
+        Transit-type flag for the BL: is the cargo under DTA (Declaración de Tránsito Aduanero) or OTM (Operación de Tránsito Multimodal)? STRICT LITERAL DETECTION — do NOT infer, do NOT guess. Only return a value when the document TEXT states it explicitly. This avoids hallucination on this flag. Search CONSIGNEE, NOTIFY PARTY and DESCRIPTION OF GOODS for these literal mentions (case-insensitive): - Contains "DTA", "tránsito aduanero", "tránsito nacional", "mercancía en DTA" → "DTA" - Contains "OTM", "tránsito multimodal", "mercancía en OTM" → "OTM" RULES: - If NEITHER "DTA" nor "OTM" (nor their literal equivalents above) appears in the text, return null. Do NOT deduce the type from zona franca, "a la orden", freight forwarders, or place-of-delivery differences — that inference is done downstream by the transactional system, NOT here. - If BOTH appear, prefer the one in the CONSIGNEE/NOTIFY area; if still ambiguous, return null. Return exactly one of: "DTA", "OTM", or null.
     tipo_bl:
       type: string
       description: |-
