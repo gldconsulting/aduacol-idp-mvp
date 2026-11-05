@@ -1,3 +1,82 @@
+# CHANGELOG – Iteración 5 (2026-10-30): traslado con planilla
+
+- `tipo_transito`: nuevo valor `TRASLADO_CON_PLANILLA` además de `DTA` y `OTM`. Se activa con "PARA TRASLADO",
+  "TRASLADO CON PLANILLA", "TRASLADO POR PLANILLA" o "PLANILLA DE TRASLADO".
+- Ubicación: DTA y OTM siguen válidos en Consignee o Notify. `TRASLADO_CON_PLANILLA` solo cuenta si está en el bloque
+  del consignatario. Según la agencia (revisión 30-oct-2026), el puerto y la DIAN no lo aceptan desde el Notify.
+- Pie de página (`*`, `**`) y cláusulas legales ("el traslado a un depósito...") no cuentan como mención literal.
+- Evidencia OCR (corrida 29-oct-2026): 11 BL con la leyenda en el bloque del consignatario (HBL0366163, HBL0366164,
+  HBL0366165, HBL0366084A/B/C/E/F, EGLV143653813415A/B/C). Dos casos fuera de regla, para decisión de Javier:
+  CDAA4878101_Imagen (la leyenda aparece bajo Notify "SAME AS CONSIGNEE") y NNBDNS26017229 (la leyenda aparece
+  en nota con asteriscos).
+- Estado: cambio en repo. Pendiente de aplicar en la configuración viva y validar con corrida de los 24 BL.
+
+# CHANGELOG – Iteración 4 (2026-10-29): peso bruto, NIT del consignee y tipo de pago
+
+- `peso_bruto_kg`: busca el total en la fila de totales/columna G.W./KG, convierte MT/LBS, null si no está impreso.
+- `consignee_nit`: busca en Consignee, Notify Party y bloque de endoso.
+- Nuevo `condiciones_pago_tipo` (CONTADO/CREDITO/null) derivado SOLO del texto de `condiciones_pago`.
+- Motivo: evidencia de la corrida de agosto (ZZ-GL250513PD-5 imprime 28608 KG y no se tomó; NGP3096941 sin NIT).
+- Aplicado a la config viva el 2026-10-29; respaldo previo en `docs/backups/config-final-disabled-20261029.json`.
+
+# CHANGELOG – Iteración 3 (FINAL): Corrección de omisión/duplicación de ítems + convergencia
+
+**Fecha:** 2026-09-25
+**Responsable:** 3HTP
+**Spec:** `docs/specs/001-fragmentacion-items-facturas-largas.md`
+
+## Causa raíz encontrada
+`classification.sectionSplitting` estaba en `single_document`, valor **inválido** (válidos:
+`disabled|page|llm_determined`). El sistema lo degradaba a `llm_determined` (confirmado en el stack
+vía DynamoDB). El clasificador página-a-página marcaba `document_boundary=start` de más y **partía
+una factura larga en varias secciones**; el transaccional leía solo `sections/1` → se perdían
+ítems, flete y total. Evidencia: `26LC0602MH` partido en 2 secciones (219+44 ítems).
+
+## Decisión de diseño (alineada a ADUACOL)
+El sistema transaccional envía **un documento por mensaje** (confirmado por el equipo de ADUACOL,
+sesión 2026-09-23). Por eso se usa **`sectionSplitting: disabled`** (todo el PDF = 1 sección),
+que elimina la fragmentación de raíz. No se requiere prompt de clasificación personalizado.
+
+## Cambios finales en config
+1. `classification.sectionSplitting`: `single_document` → **`disabled`**.
+2. `classification`: prompt **default** del accelerator (sin custom; `disabled` no decide boundary).
+3. `extraction.task_prompt` regla 15 reforzada: (i) **ANCHOR THE COUNT FIRST** (tope MAX_LINE por
+   el mayor nº de línea impreso) y (j) **NO CONSECUTIVE DUPLICATES**.
+4. `extraction` regla 14 + `tipo_transito`: **flag literal DTA/OTM/null** (requisito de Javier
+   Ambuila: solo el flag, sin alucinar). Sin `CONTINUACION_VIAJE` ni inferencia por zona franca.
+5. `queue_sender`: whitelist de extensiones (`.pdf/.png/.jpg/.jpeg/.gif`) — buena práctica de la
+   config de Anderson. **Recomendación para el stack de ADUACOL** (verificado 2026-10-29: la Lambda de pruebas no la tiene).
+
+## State Machine podado (13 → 9 estados, alineado a Anderson)
+Se eliminaron los pasos de Lambdas desactivadas para evitar cold-start:
+`SetEmptyRuleValidationResult`, `RuleValidationOrchestration`, `SummarizationStep`,
+`EvaluationStep`. Flujo final: OCR → Classification → ProcessSections → ProcessResults →
+CheckRuleValidationEnabled → [ProcessRuleValidationSections] → CheckHITLRequired →
+[MarkHITLPending] → WorkflowComplete. Aplicado vía `update_state_machine` (entorno de pruebas).
+Backup de 13 estados en `docs/backups/`.
+
+## Validación contra stack (final)
+| Doc | Antes | Ahora | Resultado |
+|---|---|---|---|
+| 26LC0602MH | 2 secciones (219+44), se perdían 44 | **1 sección, 279 ítems**; flete=1150, total=66405.03, término="CFR BUENAVENTURA" | ✅ No fragmenta; resuelve obs. 1,3,4,5 |
+| AYJ 26-02-AYJ | 1004 ítems (alucinación) | **255-623 ítems** | ✅ menos alucinación (ANCHOR/DUP) |
+| SZX503600200 (BL DTA) | — | `tipo_transito="DTA"` (literal) | ✅ detecta sin inventar |
+| WV2527TB4849 (BL DTA) | — | `tipo_transito=null` | ✅ no alucina el flag |
+| Flujo podado (9 estados) | — | ejecución **SUCCEEDED** end-to-end | ✅ |
+
+## Convergencia con el repositorio de Anderson (PR aparte)
+La config de Anderson (repo `aduacloud-idp`, estructura modular) ya tenía la v2 idéntica. 3HTP
+aportó sobre su estructura (rama `feat/3htp-antialucinacion-flag-literal`): reglas 15.i/15.j y flag
+`tipo_transito` literal en `idp_extraction.yaml` / `idp_classes.yaml`. 3HTP adopta de Anderson: la
+estructura modular de config, el state machine podado y el whitelist de extensiones.
+
+## Limitación conocida (sin cerrar)
+Alucinación residual en facturas con cientos de ítems idénticos (26LC: racha de ~23 ítems iguales).
+El prompt la reduce, no la elimina. Solución de fondo: Lambda de post-proceso con chunking por
+página (evolución opcional, spec 002). MALAWY (300+ ítems) puede exceder tiempos.
+
+---
+
 # CHANGELOG – Iteración 2: Correcciones Post-Revisión Aduacol
 
 **Fecha:** 2026-08-04 al 2026-08-12
@@ -99,7 +178,6 @@ El equipo de Aduacol (Javier Ambuila) revisó 56 documentos procesados con el ID
 ## Stack Desplegado
 
 - Stack: `GenAI-IDP-ADUACOL`
-- Cuenta: 183804119221
 - Región: us-east-1
 - Modelo extracción: Claude Haiku 4.5
 - Modelo clasificación: Amazon Nova 2 Lite (sin cambios)

@@ -18,7 +18,7 @@ classes:
       description: 'Full legal name of the exporter/seller/shipper company. Also labeled as: Seller, Shipper, Beneficiary, From, Exporter. For EXPO operations this is REQUIRED.'
     termino_negociacion:
       type: string
-      description: 'Trade term (incoterm) COMPLETE: code + delivery location. Also labeled as: Incoterm, Terms, Trade Terms, Condiciones. IMPORTANT: Extract the FULL incoterm including the delivery place/port. Examples: "FOB Ningbo", "CIF Cartagena", "CFR Buenaventura", "EXW Shanghai", "FOB Shenzhen China", "CIF Bogota". If only the code is visible without a location, extract just the code (e.g., "FOB"). THIS FIELD IS REQUIRED for all operation types.'
+      description: 'Trade term (incoterm) COMPLETE: code + delivery location. Also labeled as: Incoterm, Terms, Trade Terms, Condiciones. IMPORTANT: Extract the FULL incoterm including the delivery place/port. Examples: "FOB Ningbo", "CIF Cartagena", "CFR Buenaventura", "EXW Shanghai", "FOB Shenzhen China", "CIF Bogota". If only the code is visible without a location, extract just the code (e.g., "FOB"). THIS FIELD IS REQUIRED for all operation types. If the location is printed abbreviated (e.g., "CFR BUN"), return it exactly as printed; do not expand it and do not drop it.'
     valor_total_usd:
       type: number
       description: 'Total invoice value in US dollars. This is the GRAND TOTAL of the invoice including ALL charges: goods value + freight + insurance + other charges. Also labeled as: Total, Grand Total, Amount Due, Total Amount, Valor Total, Total Invoice Value, Net Amount, Total CIF, Total CFR. IMPORTANT: If the invoice shows a breakdown (FOB + Freight + Insurance + Other), extract the FINAL TOTAL that sums all components, not just the goods subtotal. If there is a separate "Total CIF" or "Total CFR" line, use that value. REQUIRED for EXPO and DTA operations.'
@@ -31,6 +31,9 @@ classes:
     condiciones_pago:
       type: string
       description: 'Payment terms or conditions stated in the invoice. Also labeled as: Payment Terms, Payment Conditions, Condiciones de Pago, Terms of Payment, Forma de Pago, Plazo de Pago. Examples: "30 days after shipment", "T/T 100 percent in advance", "50 percent advance, 50 percent against BL", "Letter of Credit at sight", "NET 60 DAYS", "CAD (Cash Against Documents)". Extract the full text of the payment condition as stated.'
+    condiciones_pago_tipo:
+      type: string
+      description: 'Normalized payment type derived ONLY from the text of condiciones_pago. Return "CONTADO" if the text explicitly states advance payment, cash, prepaid, contado, CAD, or payment before/at loading or shipment (e.g., "30% T/T in advance, balance before loading"). Return "CREDITO" only if it explicitly states a deferred term (e.g., NET 30, 60 days, 90 days, A CREDIT, credit, open account, after BL date). Return null if condiciones_pago is null or does not state the timing (e.g., just "T/T"). Never guess.'
     fecha_emision:
       type: string
       description: Invoice issue date. Normalize to YYYY-MM-DD.
@@ -60,7 +63,7 @@ classes:
       description: Total number of packages/cartons/cases.
     peso_bruto_kg:
       type: number
-      description: Gross weight in kilograms.
+      description: 'Total GROSS weight of the shipment in KILOGRAMS. Look in table columns labeled Gross Weight, G.W., GW, Peso Bruto, Weight, KG, KGS and especially in the TOTAL / summary row at the bottom of the table or in the footer. If the weight is printed in MT/TON or LBS, convert to kg. Use the printed TOTAL, do not sum or estimate. Return null if no weight is printed anywhere in the document.'
     items:
       type: array
       description: List of line items in the invoice.
@@ -116,7 +119,12 @@ classes:
     tipo_transito:
       type: string
       description: |-
-        Transit-type flag for the BL: is the cargo under DTA (Declaración de Tránsito Aduanero) or OTM (Operación de Tránsito Multimodal)? STRICT LITERAL DETECTION — do NOT infer, do NOT guess. Only return a value when the document TEXT states it explicitly. This avoids hallucination on this flag. Search CONSIGNEE, NOTIFY PARTY and DESCRIPTION OF GOODS for these literal mentions (case-insensitive): - Contains "DTA", "tránsito aduanero", "tránsito nacional", "mercancía en DTA" → "DTA" - Contains "OTM", "tránsito multimodal", "mercancía en OTM" → "OTM" RULES: - If NEITHER "DTA" nor "OTM" (nor their literal equivalents above) appears in the text, return null. Do NOT deduce the type from zona franca, "a la orden", freight forwarders, or place-of-delivery differences — that inference is done downstream by the transactional system, NOT here. - If BOTH appear, prefer the one in the CONSIGNEE/NOTIFY area; if still ambiguous, return null. Return exactly one of: "DTA", "OTM", or null.
+        Transit-type flag for the BL: is the cargo under DTA (Declaración de Tránsito Aduanero), OTM (Operación de Tránsito Multimodal), or TRASLADO CON PLANILLA (transfer by planilla to a free zone of the same customs office)? STRICT LITERAL DETECTION: do NOT infer, do NOT guess. Return a value only when the document TEXT states it explicitly. Literal mentions (case-insensitive):
+        - DTA: "DTA", "tránsito aduanero", "mercancía en DTA" -> "DTA".
+        - OTM: "OTM", "tránsito multimodal", "mercancía en OTM" -> "OTM". A company name that contains OTM or DTA (e.g. "LOGIMPEX OTM S.A.S") is a literal mention.
+        - TRASLADO: "PARA TRASLADO", "TRASLADO CON PLANILLA", "TRASLADO POR PLANILLA", "PLANILLA DE TRASLADO" -> "TRASLADO_CON_PLANILLA".
+        WHERE TO LOOK: DTA and OTM are valid in the CONSIGNEE or NOTIFY PARTY block. TRASLADO_CON_PLANILLA is valid ONLY in the CONSIGNEE block (the block with the consignee name, its NIT and address, above the NOTIFY PARTY block). A mention printed only in the NOTIFY PARTY block, in a footnote (for example a line starting with * or **), or inside a legal clause ("el traslado a un depósito...") is NOT a literal mention: return null for it.
+        RULES: If no literal mention appears in the places above, return null. If two different values appear in the same valid place, return null. Do NOT deduce the type from zona franca, "a la orden", freight forwarders, bank names, or place-of-delivery differences. Return exactly one of: "DTA", "OTM", "TRASLADO_CON_PLANILLA", or null.
     tipo_bl:
       type: string
       description: |-
@@ -135,7 +143,7 @@ classes:
       description: Name of the shipper/exporter.
     consignee_nit:
       type: string
-      description: Colombian NIT of the consignee. Normalize removing dots.
+      description: 'Tax ID of the consignee: Colombian NIT or, for foreign consignees, the foreign tax ID (RIF, RUC, EIN, etc.). Normalize removing dots, keep hyphen and verification digit (e.g., "901819501-3"). The ID is usually printed right below or next to the consignee name (often prefixed with "NIT" or "RIF"). Take it ONLY from the CONSIGNEE block; if the consignee block has none, return null. Do not take the NIT of the NOTIFY PARTY or of the endorsement destination.'
     notify_party_nombre:
       type: string
       description: Name of the notify party.
