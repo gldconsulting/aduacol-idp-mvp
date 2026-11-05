@@ -15,7 +15,7 @@ PDF → S3 Input → Textract OCR → Clasificación → Extracción → JSON �
 
 - **Patrón:** GenAI IDP Accelerator Pattern 2 (Bedrock LLM)
 - **Stack:** `GenAI-IDP-ADUACOL` (backend-only, sin frontend)
-- **Cuenta:** 183804119221 | **Región:** us-east-1
+- **Cuenta:** <ACCOUNT_ID> | **Región:** us-east-1
 - **Modelo clasificación:** Amazon Nova 2 Lite
 - **Modelo extracción:** Claude Haiku 4.5 (`us.anthropic.claude-haiku-4-5-20251001-v1:0`)
 

@@ -60,7 +60,7 @@ Recibe PDFs de documentos de comercio exterior, extrae campos estructurados con 
 ### Requisitos
 - Node.js 18+ (usar `nvm use`)
 - Docker Desktop corriendo
-- AWS CLI con perfil `3htp-col` (cuenta 183804119221)
+- AWS CLI con perfil `3htp-col` (cuenta <ACCOUNT_ID>)
 - CDK Bootstrap presente en la cuenta
 
 ### Desplegar
